@@ -42,14 +42,12 @@ load_dotenv()
 
 @st.cache_resource
 def load_system_message(schemas: dict) -> str:
-    """Loads and formats the system message with database schemas."""
+    """Loads and formats the system message with database schemas, including ORA representation."""
     return SYSTEM_MESSAGE.format(schemas=json.dumps(schemas, indent=2))
-
 
 def get_data(query: str, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> pd.DataFrame:
     """Fetches data from the database using the provided query."""
     return DB_Config.query_database(query, db_name, db_type, host, user, password)
-
 
 def save_temp_file(uploaded_file) -> str:
     """Saves an uploaded file to a temporary location."""
@@ -57,7 +55,6 @@ def save_temp_file(uploaded_file) -> str:
     with open(temp_file_path, "wb") as f:
         f.write(uploaded_file.read())
     return temp_file_path
-
 
 # Step 1: Define Type Classes
 class Path(TypedDict):
@@ -176,22 +173,24 @@ DECISION_LOG_SCHEMA = {
     "required": ["query", "decision_log"]
 }
 
-
 # Step 3: Implement the Modified generate_sql_query Function
 def generate_sql_query(user_message: str, schemas: dict, max_attempts: int = 1) -> dict:
-    """Generates an SQL query based on the user message and database schemas."""
+    """Generates an SQL query based on the user message and database schemas, including ORA."""
     formatted_system_message = f"""
     {load_system_message(schemas)}
 
     IMPORTANT: Your response must be valid JSON matching this schema:
     {json.dumps(DECISION_LOG_SCHEMA, indent=2)}
 
-    Ensure all responses strictly follow this format.  Include a final_summary and visualization_suggestion in the decision_log.
+    Ensure all responses strictly follow this format. Include a final_summary and visualization_suggestion in the decision_log.
     """
 
     for attempt in range(max_attempts):
         try:
             response = get_completion_from_messages(formatted_system_message, user_message)
+            # Strip any triple-backtick fences
+            response = re.sub(r'^```json\s*', '', response.strip())
+            response = re.sub(r'```$', '', response.strip())
             json_response = json.loads(response)
 
             if not validate_response_structure(json_response):
@@ -219,7 +218,6 @@ def generate_sql_query(user_message: str, schemas: dict, max_attempts: int = 1) 
             "final_summary": "Query generation failed."
         }
     }
-
 
 # Step 4: Implement Response Validation
 def validate_response_structure(response: dict) -> bool:
@@ -258,14 +256,14 @@ def validate_response_structure(response: dict) -> bool:
     except Exception as e:
         logger.error(f"Validation error: {e}")
         return False
-    
+
 def build_markdown_decision_log(decision_log: Dict) -> str:
     """
     Builds a markdown formatted decision log that matches the schema structure.
     Handles all fields defined in the DECISION_LOG_SCHEMA.
     """
     markdown_log = []
-    
+
     # Query Input Details
     if query_details := decision_log.get("query_input_details"):
         markdown_log.extend([
@@ -273,7 +271,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {detail}" for detail in query_details),
             ""
         ])
-    
+
     # Preprocessing Steps
     if preprocessing := decision_log.get("preprocessing_steps"):
         markdown_log.extend([
@@ -281,7 +279,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {step}" for step in preprocessing),
             ""
         ])
-    
+
     # Path Identification
     if paths := decision_log.get("path_identification"):
         markdown_log.extend([
@@ -295,7 +293,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             ]),
             ""
         ])
-    
+
     # Ambiguity Detection
     if ambiguities := decision_log.get("ambiguity_detection"):
         markdown_log.extend([
@@ -303,7 +301,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {ambiguity}" for ambiguity in ambiguities),
             ""
         ])
-    
+
     # Resolution Criteria
     if criteria := decision_log.get("resolution_criteria"):
         markdown_log.extend([
@@ -311,7 +309,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {criterion}" for criterion in criteria),
             ""
         ])
-    
+
     # Chosen Path Explanation
     if chosen_path := decision_log.get("chosen_path_explanation"):
         markdown_log.extend([
@@ -324,7 +322,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             ]),
             ""
         ])
-    
+
     # Generated SQL Query
     if sql_query := decision_log.get("generated_sql_query"):
         markdown_log.extend([
@@ -332,7 +330,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             f"```sql\n{sql_query}\n```",
             ""
         ])
-    
+
     # Alternative Paths
     if alternatives := decision_log.get("alternative_paths"):
         markdown_log.extend([
@@ -340,7 +338,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {alt}" for alt in alternatives),
             ""
         ])
-    
+
     # Execution Feedback
     if feedback := decision_log.get("execution_feedback"):
         markdown_log.extend([
@@ -348,7 +346,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             "\n".join(f"- {item}" for item in feedback),
             ""
         ])
-    
+
     # Final Summary
     if summary := decision_log.get("final_summary"):
         markdown_log.extend([
@@ -356,7 +354,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             summary,
             ""
         ])
-    
+
     # Visualization Suggestion
     if viz_suggestion := decision_log.get("visualization_suggestion"):
         markdown_log.extend([
@@ -364,10 +362,9 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
             f"Suggested visualization type: `{viz_suggestion}`",
             ""
         ])
-    
+
     # Join with proper line breaks and clean up any extra spaces
     return "\n".join(line.rstrip() for line in markdown_log)
-
 
 def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> Optional[alt.Chart]:
     """Creates an Altair chart based on specified type and columns."""
@@ -416,7 +413,6 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
         logger.error(f"Error generating chart: {e}")
         return None
 
-
 def display_summary_statistics(df: pd.DataFrame) -> None:
     """Displays summary statistics for the DataFrame."""
     if df.empty:
@@ -460,7 +456,6 @@ def display_summary_statistics(df: pd.DataFrame) -> None:
                 freq_table.columns = ['Category', 'Count']
                 freq_table['Percentage'] = (freq_table['Count'] / len(df) * 100).round(2)
                 st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
-
 
 def handle_query_response(response: dict, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> None:
     """Handles the response from the query generation, displaying results and visualizations."""
@@ -582,7 +577,6 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
         st.error(f"An unexpected error occurred: {detailed_error}")
         logger.exception(f"Unexpected error: {e}")
 
-
 def validate_sql_query(query: str) -> bool:
     """Validates if the generated SQL query is safe to execute."""
     if not isinstance(query, str):
@@ -600,7 +594,6 @@ def validate_sql_query(query: str) -> bool:
         return False
 
     return True
-
 
 def export_results(sql_results: pd.DataFrame, export_format: str) -> None:
     """Exports the results to the selected format (CSV, Excel, or JSON)."""
@@ -632,7 +625,6 @@ def export_results(sql_results: pd.DataFrame, export_format: str) -> None:
     else:
         st.error("⚠️ Selected export format is not supported.")
 
-
 def analyze_dataframe_for_visualization(df: pd.DataFrame) -> list:
     """Analyzes the DataFrame and suggests suitable visualization types."""
     suggestions = set()
@@ -663,13 +655,11 @@ def analyze_dataframe_for_visualization(df: pd.DataFrame) -> list:
     logger.debug(f"Ordered Suggestions: {ordered_suggestions}")
     return ordered_suggestions
 
-
 def generate_detailed_error_message(error_message: str) -> str:
     """Generates a detailed and user-friendly explanation of an error message."""
     prompt = f"Provide a detailed and user-friendly explanation for the following error message:\n\n{error_message}"
     detailed_error = get_completion_from_messages(SYSTEM_MESSAGE, prompt)
     return detailed_error.strip() if detailed_error else error_message
-
 
 # Database Setup
 db_type = st.sidebar.selectbox("Select Database Type 🗄️", options=["SQLite", "PostgreSQL"])

@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Optional, Dict, Any, Union
 import psycopg2
-from psycopg2 import OperationalError
+from psycopg2 import OperationalError, sql
 import pandas as pd
 import logging
 
@@ -9,6 +9,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_schema_cache = {}  # Cache to store retrieved schemas
 
 def create_connection(
     db_name: str,
@@ -52,7 +53,6 @@ def create_connection(
         logger.exception(f"Unexpected error while connecting to the database: {e}")
     return None
 
-
 def query_database(
     query: str,
     db_name: str,
@@ -84,13 +84,18 @@ def query_database(
         df = pd.read_sql_query(query, conn)
         logger.info("Query executed successfully.")
         return df
+    except psycopg2.OperationalError as e:
+        logger.error(f"PostgreSQL operational error: {e}")
+        return pd.DataFrame()
+    except sqlite3.DatabaseError as e:
+        logger.error(f"SQLite database error: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        logger.error(f"Error executing query: {e}")
+        logger.exception(f"Unexpected error executing query: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
         logger.info("Database connection closed.")
-
 
 def get_all_schemas(
     db_name: str,
@@ -101,17 +106,13 @@ def get_all_schemas(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Retrieve schema information from the database.
-
-    Parameters:
-    - db_name (str): Name of the database.
-    - db_type (str): Type of the database ('sqlite' or 'postgresql').
-    - host (Optional[str]): Host address (for PostgreSQL).
-    - user (Optional[str]): Username (for PostgreSQL).
-    - password (Optional[str]): Password (for PostgreSQL).
-
-    Returns:
-    - Dict[str, Dict[str, Any]]: Dictionary containing schema information.
+    Checks cache first; if not found, fetches from DB and stores in cache.
     """
+    cache_key = (db_name, db_type, host, user, password)
+    if cache_key in _schema_cache:
+        logger.info("Schema retrieved from cache.")
+        return _schema_cache[cache_key]
+
     conn = create_connection(db_name, db_type, host, user, password)
     if conn is None:
         logger.error("Database connection failed. Returning empty schemas.")
@@ -126,23 +127,29 @@ def get_all_schemas(
             tables = [table[0] for table in cursor.fetchall()]
 
             for table_name in tables:
-                schemas[table_name] = get_sqlite_table_info(cursor, table_name)
+                table_info = get_sqlite_table_info(cursor, table_name)
+                table_info['ora_representation'] = generate_ora_representation(table_name, table_info)
+                schemas[table_name] = table_info
 
         elif db_type.lower() == 'postgresql':
             cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
+                SELECT table_name
+                FROM information_schema.tables
                 WHERE table_schema = 'public';
             """)
             tables = [table[0] for table in cursor.fetchall()]
 
             for table_name in tables:
-                schemas[table_name] = get_postgresql_table_info(cursor, table_name)
+                table_info = get_postgresql_table_info(cursor, table_name)
+                table_info['ora_representation'] = generate_ora_representation(table_name, table_info)
+                schemas[table_name] = table_info
 
         else:
             logger.error(f"Unsupported database type: {db_type}")
             return {}
-        logger.info("Schema information retrieved successfully.")
+
+        _schema_cache[cache_key] = schemas
+        logger.info("Schema information retrieved and cached successfully.")
         return schemas
 
     except Exception as e:
@@ -152,7 +159,6 @@ def get_all_schemas(
     finally:
         conn.close()
         logger.info("Database connection closed.")
-
 
 def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
@@ -165,7 +171,7 @@ def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
     Returns:
     - Dict[str, Any]: Dictionary containing table schema information.
     """
-    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': []}
+    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': [], 'primary_keys': []}
 
     # Get column information
     cursor.execute(f"PRAGMA table_info(\"{table_name}\");")
@@ -177,6 +183,8 @@ def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
             'primary_key': bool(col[5]),
             'default': col[4]
         }
+        if col[5]:  # If it's a primary key
+            table_info['primary_keys'].append(col[1])
 
     # Get foreign key constraints
     cursor.execute(f"PRAGMA foreign_key_list(\"{table_name}\");")
@@ -213,7 +221,6 @@ def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
 
     return table_info
 
-
 def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
     Retrieve table schema information for PostgreSQL.
@@ -225,17 +232,17 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
     Returns:
     - Dict[str, Any]: Dictionary containing table schema information.
     """
-    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': []}
+    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': [], 'primary_keys': []}
 
     # Get column information
     cursor.execute("""
-        SELECT 
-            column_name, 
+        SELECT
+            column_name,
             data_type,
             is_nullable,
             column_default,
             character_maximum_length
-        FROM information_schema.columns 
+        FROM information_schema.columns
         WHERE table_name = %s;
     """, [table_name])
     columns = cursor.fetchall()
@@ -250,41 +257,46 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
 
     # Get primary key information
     cursor.execute("""
-        SELECT c.column_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.constraint_column_usage AS ccu 
-            ON tc.constraint_name = ccu.constraint_name
-        JOIN information_schema.columns AS c 
-            ON c.table_name = tc.table_name AND c.column_name = ccu.column_name
-        WHERE constraint_type = 'PRIMARY KEY' AND tc.table_name = %s;
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+        ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.table_name = %s AND tc.constraint_type = 'PRIMARY KEY';
     """, [table_name])
     pk_columns = [col[0] for col in cursor.fetchall()]
     for col in pk_columns:
         if col in table_info['columns']:
             table_info['columns'][col]['primary_key'] = True
+            table_info['primary_keys'].append(col)
 
     # Get foreign key information
     cursor.execute("""
         SELECT
-            kcu.column_name,
-            ccu.table_name AS foreign_table_name,
-            ccu.column_name AS foreign_column_name
+            kcu.column_name AS from_column,
+            ccu.table_name AS to_table,
+            ccu.column_name AS to_column,
+            rc.update_rule AS on_update,
+            rc.delete_rule AS on_delete
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu
-            ON tc.constraint_name = kcu.constraint_name
+        ON tc.constraint_name = kcu.constraint_name
         JOIN information_schema.constraint_column_usage AS ccu
-            ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = %s;
+        ON tc.constraint_name = ccu.constraint_name
+        JOIN information_schema.referential_constraints AS rc
+        ON tc.constraint_name = rc.constraint_name
+        WHERE tc.table_name = %s AND tc.constraint_type = 'FOREIGN KEY';
     """, [table_name])
     fkeys = cursor.fetchall()
     for fk in fkeys:
         table_info['foreign_keys'].append({
             'from_column': fk[0],
             'to_table': fk[1],
-            'to_column': fk[2]
+            'to_column': fk[2],
+            'on_update': fk[3],
+            'on_delete': fk[4]
         })
 
-    # Get indexes information
+    # Get indexes
     cursor.execute("""
         SELECT
             indexname,
@@ -314,3 +326,39 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
         ]
 
     return table_info
+
+def generate_ora_representation(table_name: str, table_info: Dict[str, Any]) -> str:
+    """
+    Generates an Object-Relation-Attribute (ORA) representation of the table schema.
+
+    Parameters:
+    - table_name (str): The name of the table.
+    - table_info (Dict[str, Any]): The schema information for the table.
+
+    Returns:
+    - str: The ORA representation of the table.
+    """
+    ora_parts = [f"Object: {table_name}"]
+    attributes = []
+    relationships = []
+
+    for col_name, col_details in table_info['columns'].items():
+        attr_desc = f"  Attribute: {col_name} (Type: {col_details['type']}"
+        if col_details.get('primary_key'):
+            attr_desc += ", Primary Key"
+        if not col_details['nullable']:
+            attr_desc += ", Not Null"
+        if col_details.get('default') is not None:
+            attr_desc += f", Default: {col_details['default']}"
+        attr_desc += ")"
+        attributes.append(attr_desc)
+
+    for fk in table_info['foreign_keys']:
+        relationships.append(
+            f"  Relationship: References {fk['to_table']}.{fk['to_column']} via {fk['from_column']} (On Update: {fk['on_update']}, On Delete: {fk['on_delete']})"
+        )
+
+    ora_parts.extend(attributes)
+    ora_parts.extend(relationships)
+
+    return "\n".join(ora_parts)
