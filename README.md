@@ -1,11 +1,12 @@
 <div align="center">
 
 ![Banner](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=NLP2SQL&fontSize=80&animation=fadeIn&fontAlignY=35)
+
 </div>
 
 <div align="center">
 
-[![Made with Google Gemini](https://img.shields.io/badge/Made%20with-Google%20Gemini-4285F4?style=for-the-badge&logo=google)](https://deepmind.google/technologies/gemini/)
+[![Made with Azure OpenAI](https://img.shields.io/badge/Made%20with-Azure%20OpenAI-0078D4?style=for-the-badge&logo=microsoft)](https://azure.microsoft.com/en-us/services/cognitive-services/openai/)
 [![Built with Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit)](https://streamlit.io)
 [![Database](https://img.shields.io/badge/Database-PostgreSQL%20%7C%20SQLite-336791?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
 
@@ -25,7 +26,7 @@
 <summary>🎯 Core Features</summary>
 
 - **Natural Language to SQL** 🗣️ → 📝
-  - Convert text queries into SQL commands using Google's Gemini Pro model
+  - Convert text queries into SQL commands using Azure OpenAI models
   - Intelligent query interpretation with detailed decision logs
   - Step-by-step reasoning for query generation
 - **Multi-Database Support** 🗄️
@@ -72,7 +73,7 @@
 
 ```mermaid
 graph LR
-    A[User Input] --> B[Gemini Pro]
+    A[User Input] --> B[Azure OpenAI]
     B --> C[SQL Generator]
     C --> D[Database]
     D --> E[Results]
@@ -84,7 +85,7 @@ graph LR
 1️⃣ **Clone the Repository**
 
 ```bash
-git clone https://github.com/yourusername/NLP2SQL.git
+git clone https://github.com/lohitkolluri/NLP2SQLL.git
 cd NLP2SQL
 ```
 
@@ -93,8 +94,10 @@ cd NLP2SQL
 ```bash
 # Create .env file
 cat << EOF > .env
-GEMINI_API_KEY = "Your Google Gemini API Key"
-GEMINI_MODEL = "Name of Gemini Model You Will be usin"
+OPENAI_ENDPOINT="https://[ENDPOINT_NAME].openai.azure.com"
+OPENAI_API_VERSION="2024-08-01-preview"
+OPENAI_API_KEY="YOUR AZURE OPENAI API KEY"
+MODEL_NAME="YOUR AZURE OPENAI MODEL NAME"
 EOF
 ```
 
@@ -114,12 +117,13 @@ streamlit run app/NLP2SQL.py
 
 <div align="center">
 
-|                                             Technology                                              |    Purpose     |
-| :-------------------------------------------------------------------------------------------------: | :------------: |
-|    ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit)     | Web Interface  |
-| ![Google Gemini](https://img.shields.io/badge/Google%20Gemini-4285F4?style=flat-square&logo=google) | NLP Processing |
-|   ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=flat-square&logo=postgresql)   |    Database    |
-|               ![Altair](https://img.shields.io/badge/Altair-005571?style=flat-square)               | Visualizations |
+|                                              Technology                                              |    Purpose     |
+| :--------------------------------------------------------------------------------------------------: | :------------: |
+|     ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit)     | Web Interface  |
+| ![Azure OpenAI](https://img.shields.io/badge/Azure%20OpenAI-0078D4?style=flat-square&logo=microsoft) | NLP Processing |
+|   ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=flat-square&logo=postgresql)    | PostgreSQL DB  |
+|         ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite)          |   SQLite DB    |
+|               ![Altair](https://img.shields.io/badge/Altair-005571?style=flat-square)                | Visualizations |
 
 </div>
 
@@ -149,7 +153,7 @@ mindmap
 ## 💡 How It Works
 
 1. **Query Input** ➡️ User enters natural language query
-2. **Processing** ➡️ Gemini Pro analyzes and generates SQL with reasoning
+2. **Processing** ➡️ Azure OpenAI analyzes and generates SQL with reasoning
 3. **Validation** ➡️ Query is validated for safety and correctness
 4. **Execution** ➡️ Query runs against selected database
 5. **Analysis** ➡️ Results are processed with summary statistics
@@ -185,7 +189,7 @@ mindmap
 </div>
 <div align="center">
 
-MIT License © [Lohit Kolluri](LICENSE) - feel free to use this project as you wish!
+License © [Lohit Kolluri](LICENSE)
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=100&section=footer" width="100%"/>
 
