@@ -20,7 +20,7 @@ from src.prompts.Base_Prompt import SYSTEM_MESSAGE
 from src.api.LLM_Config import get_completion_from_messages
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG for more verbose output
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 SUPPORTED_CHART_TYPES = {
@@ -42,11 +42,11 @@ load_dotenv()
 
 @st.cache_resource
 def load_system_message(schemas: dict) -> str:
-    """Loads and formats the system message with database schemas, including ORA representation."""
+    """Load and format the system message with JSON-serialized schemas."""
     return SYSTEM_MESSAGE.format(schemas=json.dumps(schemas, indent=2))
 
 def get_data(query: str, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> pd.DataFrame:
-    """Fetches data from the database using the provided query."""
+    """Run the specified query and return the resulting DataFrame."""
     return DB_Config.query_database(query, db_name, db_type, host, user, password)
 
 def save_temp_file(uploaded_file) -> str:
@@ -175,7 +175,7 @@ DECISION_LOG_SCHEMA = {
 
 # Step 3: Implement the Modified generate_sql_query Function
 def generate_sql_query(user_message: str, schemas: dict, max_attempts: int = 1) -> dict:
-    """Generates an SQL query based on the user message and database schemas, including ORA."""
+    """Generate a SQL query using LLM responses and validate output structure."""
     formatted_system_message = f"""
     {load_system_message(schemas)}
 
@@ -221,7 +221,7 @@ def generate_sql_query(user_message: str, schemas: dict, max_attempts: int = 1) 
 
 # Step 4: Implement Response Validation
 def validate_response_structure(response: dict) -> bool:
-    """Validates the structure of the Gemini response against the schema."""
+    """Check if the LLM response follows the expected JSON schema."""
     try:
         if not all(key in response for key in ["query", "decision_log"]):
             return False
@@ -258,10 +258,7 @@ def validate_response_structure(response: dict) -> bool:
         return False
 
 def build_markdown_decision_log(decision_log: Dict) -> str:
-    """
-    Builds a markdown formatted decision log that matches the schema structure.
-    Handles all fields defined in the DECISION_LOG_SCHEMA.
-    """
+    """Convert the decision log into a markdown-formatted string."""
     markdown_log = []
 
     # Query Input Details
@@ -367,7 +364,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
     return "\n".join(line.rstrip() for line in markdown_log)
 
 def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> Optional[alt.Chart]:
-    """Creates an Altair chart based on specified type and columns."""
+    """Construct an Altair chart based on user-selected chart type and columns."""
     base_chart = alt.Chart(df).configure_title(fontSize=18, fontWeight='bold', font='Roboto')
 
     try:
@@ -414,7 +411,7 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
         return None
 
 def display_summary_statistics(df: pd.DataFrame) -> None:
-    """Displays summary statistics for the DataFrame."""
+    """Show numeric and categorical data summaries, along with basic visualizations."""
     if df.empty:
         st.warning("The DataFrame is empty. Unable to display summary statistics.")
         return
@@ -458,7 +455,7 @@ def display_summary_statistics(df: pd.DataFrame) -> None:
                 st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
 
 def handle_query_response(response: dict, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> None:
-    """Handles the response from the query generation, displaying results and visualizations."""
+    """Process LLM-generated SQL query, display results, and handle visualizations."""
     try:
         query = response.get('query', '')
         error = response.get('error', '')
@@ -578,7 +575,7 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
         logger.exception(f"Unexpected error: {e}")
 
 def validate_sql_query(query: str) -> bool:
-    """Validates if the generated SQL query is safe to execute."""
+    """Ensure the SQL query is valid and safe (select queries only)."""
     if not isinstance(query, str):
         return False
 
@@ -596,7 +593,7 @@ def validate_sql_query(query: str) -> bool:
     return True
 
 def export_results(sql_results: pd.DataFrame, export_format: str) -> None:
-    """Exports the results to the selected format (CSV, Excel, or JSON)."""
+    """Allow the user to download query results in CSV, Excel, or JSON format."""
     if export_format == "CSV":
         st.download_button(
             label="📥 Download Results as CSV",
@@ -626,7 +623,7 @@ def export_results(sql_results: pd.DataFrame, export_format: str) -> None:
         st.error("⚠️ Selected export format is not supported.")
 
 def analyze_dataframe_for_visualization(df: pd.DataFrame) -> list:
-    """Analyzes the DataFrame and suggests suitable visualization types."""
+    """Propose suitable chart types based on numeric and categorical column analysis."""
     suggestions = set()
     numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -656,7 +653,7 @@ def analyze_dataframe_for_visualization(df: pd.DataFrame) -> list:
     return ordered_suggestions
 
 def generate_detailed_error_message(error_message: str) -> str:
-    """Generates a detailed and user-friendly explanation of an error message."""
+    """Use the LLM to produce a user-friendly explanation of any encountered error."""
     prompt = f"Provide a detailed and user-friendly explanation for the following error message:\n\n{error_message}"
     detailed_error = get_completion_from_messages(SYSTEM_MESSAGE, prompt)
     return detailed_error.strip() if detailed_error else error_message

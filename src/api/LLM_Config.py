@@ -97,11 +97,6 @@ def get_completion_from_messages(
         )
         # For simplicity, return the first completion if n > 1
         completion = response.choices[0].message.content
-
-        # Log output response
-        # logger.info(f"Generated completion: {completion}")
-
-        # logger.info("Received completion from OpenAI API.")
         return completion
     except Exception as e:
         logger.exception("Error while fetching completion from OpenAI API.")

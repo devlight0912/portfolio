@@ -9,7 +9,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_schema_cache = {}  # Cache to store retrieved schemas
+_schema_cache = {}
 
 def create_connection(
     db_name: str,
