@@ -18,19 +18,11 @@ def create_connection(
     user: Optional[str] = None,
     password: Optional[str] = None
 ) -> Optional[Union[sqlite3.Connection, psycopg2.extensions.connection]]:
-    """
-    Create or connect to a database.
+    global _schema_cache
 
-    Parameters:
-    - db_name (str): Name of the database.
-    - db_type (str): Type of the database ('sqlite' or 'postgresql').
-    - host (Optional[str]): Host address (for PostgreSQL).
-    - user (Optional[str]): Username (for PostgreSQL).
-    - password (Optional[str]): Password (for PostgreSQL).
+    # Reset schema cache when using a new database
+    _schema_cache = {}
 
-    Returns:
-    - Optional[Connection]: Database connection object or None if connection fails.
-    """
     try:
         if db_type.lower() == 'postgresql':
             conn = psycopg2.connect(
