@@ -18,11 +18,6 @@ def create_connection(
     user: Optional[str] = None,
     password: Optional[str] = None
 ) -> Optional[Union[sqlite3.Connection, psycopg2.extensions.connection]]:
-    global _schema_cache
-
-    # Reset schema cache when using a new database
-    _schema_cache = {}
-
     try:
         if db_type.lower() == 'postgresql':
             conn = psycopg2.connect(
@@ -98,13 +93,7 @@ def get_all_schemas(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Retrieve schema information from the database.
-    Checks cache first; if not found, fetches from DB and stores in cache.
     """
-    cache_key = (db_name, db_type, host, user, password)
-    if cache_key in _schema_cache:
-        logger.info("Schema retrieved from cache.")
-        return _schema_cache[cache_key]
-
     conn = create_connection(db_name, db_type, host, user, password)
     if conn is None:
         logger.error("Database connection failed. Returning empty schemas.")
@@ -140,8 +129,6 @@ def get_all_schemas(
             logger.error(f"Unsupported database type: {db_type}")
             return {}
 
-        _schema_cache[cache_key] = schemas
-        logger.info("Schema information retrieved and cached successfully.")
         return schemas
 
     except Exception as e:
