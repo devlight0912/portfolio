@@ -28,7 +28,9 @@ SUPPORTED_CHART_TYPES = {
     "Line Chart": "A chart that displays information as a series of data points called 'markers' connected by straight line segments.",
     "Scatter Plot": "A plot that displays values for typically two variables for a set of data.",
     "Area Chart": "A chart that displays quantitative data visually, using the area below the line.",
-    "Histogram": "A graphical representation of the distribution of numerical data."
+    "Histogram": "A graphical representation of the distribution of numerical data.",
+    "Pie Chart": "A chart that shows proportions of a whole using slices.",
+    "Box Plot": "A chart that shows the distribution of data based on quartiles."
 }
 
 # Page Configuration
@@ -373,7 +375,9 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
             "Line Chart": base_chart.mark_line(),
             "Scatter Plot": base_chart.mark_circle(),
             "Area Chart": base_chart.mark_area(),
-            "Histogram": base_chart.mark_bar()
+            "Histogram": base_chart.mark_bar(),
+            "Pie Chart": base_chart.mark_arc(),
+            "Box Plot": base_chart.mark_boxplot()
         }
 
         if chart_type not in chart_props:
@@ -388,6 +392,20 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
                 width='container',
                 height=400
             ).interactive()
+        elif chart_type == "Pie Chart":
+            # Example pie chart code:
+            chart = alt.Chart(df).mark_arc().encode(
+                theta=alt.Theta(field=y_col, type="quantitative"),
+                color=alt.Color(field=x_col, type="nominal")
+            ).properties(width='container', height=400).interactive()
+            return chart
+        elif chart_type == "Box Plot":
+            # Example box plot code:
+            chart = alt.Chart(df).mark_boxplot().encode(
+                x=alt.X(x_col, title=x_col),
+                y=alt.Y(y_col, title=y_col)
+            ).properties(width='container', height=400).interactive()
+            return chart
         else:
             encoding = {
                 "x": alt.X(x_col, title=x_col),
@@ -534,7 +552,7 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
                 x_col_clean = x_col.replace(" ⭐", "")
                 y_col_clean = y_col.replace(" ⭐", "")
 
-                chart_type_options = ["None", "Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Histogram"]
+                chart_type_options = ["None", "Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Histogram", "Pie Chart", "Box Plot"]
                 suggested_chart_type = visualization_recommendation if visualization_recommendation in chart_type_options else ("Bar Chart" if numerical_cols else "None")
                 chart_type_display = [f"{chart} ⭐" if chart == suggested_chart_type else chart for chart in chart_type_options]
 

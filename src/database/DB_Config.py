@@ -1,15 +1,18 @@
 import sqlite3
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 import psycopg2
 from psycopg2 import OperationalError, sql
 import pandas as pd
 import logging
+import json
+from contextlib import contextmanager
+from abc import ABC, abstractmethod
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_schema_cache = {}
+_schema_cache: Dict[str, Any] = {}
 
 def create_connection(
     db_name: str,
@@ -18,6 +21,9 @@ def create_connection(
     user: Optional[str] = None,
     password: Optional[str] = None
 ) -> Optional[Union[sqlite3.Connection, psycopg2.extensions.connection]]:
+    """
+    Create a database connection for either SQLite or PostgreSQL.
+    """
     try:
         if db_type.lower() == 'postgresql':
             conn = psycopg2.connect(
@@ -40,6 +46,20 @@ def create_connection(
         logger.exception(f"Unexpected error while connecting to the database: {e}")
     return None
 
+@contextmanager
+def get_connection(db_name: str, db_type: str, host: Optional[str]=None,
+                   user: Optional[str]=None, password: Optional[str]=None):
+    """
+    Context manager for database connections.
+    """
+    conn = create_connection(db_name, db_type, host, user, password)
+    try:
+        yield conn
+    finally:
+        if conn:
+            conn.close()
+            logger.info("Database connection closed.")
+
 def query_database(
     query: str,
     db_name: str,
@@ -50,120 +70,102 @@ def query_database(
 ) -> pd.DataFrame:
     """
     Execute an SQL query and return the results as a DataFrame.
-
-    Parameters:
-    - query (str): The SQL query to execute.
-    - db_name (str): Name of the database.
-    - db_type (str): Type of the database ('sqlite' or 'postgresql').
-    - host (Optional[str]): Host address (for PostgreSQL).
-    - user (Optional[str]): Username (for PostgreSQL).
-    - password (Optional[str]): Password (for PostgreSQL).
-
-    Returns:
-    - pd.DataFrame: Query results.
     """
-    conn = create_connection(db_name, db_type, host, user, password)
-    if conn is None:
-        logger.error("Database connection failed. Returning empty DataFrame.")
-        return pd.DataFrame()
+    with get_connection(db_name, db_type, host, user, password) as conn:
+        if conn is None:
+            logger.error("Database connection failed. Returning empty DataFrame.")
+            return pd.DataFrame()
+        try:
+            df = pd.read_sql_query(query, conn)
+            logger.info("Query executed successfully.")
+            return df
+        except Exception as e:
+            logger.exception(f"Unexpected error executing query: {e}")
+            return pd.DataFrame()
 
-    try:
-        df = pd.read_sql_query(query, conn)
-        logger.info("Query executed successfully.")
-        return df
-    except psycopg2.OperationalError as e:
-        logger.error(f"PostgreSQL operational error: {e}")
-        return pd.DataFrame()
-    except sqlite3.DatabaseError as e:
-        logger.error(f"SQLite database error: {e}")
-        return pd.DataFrame()
-    except Exception as e:
-        logger.exception(f"Unexpected error executing query: {e}")
-        return pd.DataFrame()
-    finally:
-        conn.close()
-        logger.info("Database connection closed.")
+# --- Abstract Schema Extractor Classes ---
 
-def get_all_schemas(
-    db_name: str,
-    db_type: str,
-    host: Optional[str] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None
-) -> Dict[str, Dict[str, Any]]:
+class SchemaExtractor(ABC):
     """
-    Retrieve schema information from the database.
+    Abstract base class for schema extraction.
     """
-    conn = create_connection(db_name, db_type, host, user, password)
-    if conn is None:
-        logger.error("Database connection failed. Returning empty schemas.")
-        return {}
+    def __init__(self, connection):
+        self.conn = connection
 
-    schemas = {}
-    try:
-        cursor = conn.cursor()
+    @abstractmethod
+    def get_tables(self) -> List[str]:
+        pass
 
-        if db_type.lower() == 'sqlite':
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = [table[0] for table in cursor.fetchall()]
+    @abstractmethod
+    def get_table_info(self, table_name: str) -> Dict[str, Any]:
+        pass
 
-            for table_name in tables:
-                table_info = get_sqlite_table_info(cursor, table_name)
-                table_info['ora_representation'] = generate_ora_representation(table_name, table_info)
-                schemas[table_name] = table_info
+class SQLiteSchemaExtractor(SchemaExtractor):
+    """
+    Extract schema information from a SQLite database.
+    """
+    def get_tables(self) -> List[str]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row[0] for row in cursor.fetchall()]
+        return tables
 
-        elif db_type.lower() == 'postgresql':
-            cursor.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public';
-            """)
-            tables = [table[0] for table in cursor.fetchall()]
+    def get_table_info(self, table_name: str) -> Dict[str, Any]:
+        cursor = self.conn.cursor()
+        table_info = get_sqlite_table_info(cursor, table_name)
+        # Optionally, add additional SQLite-specific extraction here (e.g., triggers, check constraints)
+        return table_info
 
-            for table_name in tables:
-                table_info = get_postgresql_table_info(cursor, table_name)
-                table_info['ora_representation'] = generate_ora_representation(table_name, table_info)
-                schemas[table_name] = table_info
+class PostgreSQLSchemaExtractor(SchemaExtractor):
+    """
+    Extract schema information from a PostgreSQL database.
+    """
+    def get_tables(self) -> List[str]:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public';
+        """)
+        tables = [row[0] for row in cursor.fetchall()]
+        return tables
 
-        else:
-            logger.error(f"Unsupported database type: {db_type}")
-            return {}
+    def get_table_info(self, table_name: str) -> Dict[str, Any]:
+        cursor = self.conn.cursor()
+        table_info = get_postgresql_table_info(cursor, table_name)
+        # Optionally, add additional PostgreSQL-specific extraction here (e.g., triggers, unique constraints)
+        return table_info
 
-        return schemas
-
-    except Exception as e:
-        logger.exception(f"Error retrieving schema information: {e}")
-        return {}
-
-    finally:
-        conn.close()
-        logger.info("Database connection closed.")
+# --- SQLite Schema Extraction ---
 
 def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
-    Retrieve table schema information for SQLite.
-
-    Parameters:
-    - cursor: SQLite database cursor.
-    - table_name (str): The name of the table.
-
-    Returns:
-    - Dict[str, Any]: Dictionary containing table schema information.
+    Retrieve schema information for a given SQLite table.
     """
-    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': [], 'primary_keys': []}
+    table_info = {
+        'columns': {},
+        'foreign_keys': [],
+        'indexes': [],
+        'sample_data': [],
+        'primary_keys': [],
+        # Placeholder for additional constraints/triggers if needed:
+        'constraints': [],
+        'triggers': []
+    }
 
     # Get column information
     cursor.execute(f"PRAGMA table_info(\"{table_name}\");")
     columns = cursor.fetchall()
     for col in columns:
-        table_info['columns'][col[1]] = {
+        col_name = col[1]
+        table_info['columns'][col_name] = {
             'type': col[2],
             'nullable': not col[3],
-            'primary_key': bool(col[5]),
-            'default': col[4]
+            'default': col[4],
+            'primary_key': bool(col[5])
         }
-        if col[5]:  # If it's a primary key
-            table_info['primary_keys'].append(col[1])
+        if col[5]:
+            table_info['primary_keys'].append(col_name)
 
     # Get foreign key constraints
     cursor.execute(f"PRAGMA foreign_key_list(\"{table_name}\");")
@@ -193,25 +195,29 @@ def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
     cursor.execute(f"SELECT * FROM \"{table_name}\" LIMIT 5;")
     sample_data = cursor.fetchall()
     if sample_data:
-        column_names = [description[0] for description in cursor.description]
+        column_names = [desc[0] for desc in cursor.description]
         table_info['sample_data'] = [
             dict(zip(column_names, row)) for row in sample_data
         ]
 
     return table_info
 
+# --- PostgreSQL Schema Extraction ---
+
 def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
-    Retrieve table schema information for PostgreSQL.
-
-    Parameters:
-    - cursor: PostgreSQL database cursor.
-    - table_name (str): The name of the table.
-
-    Returns:
-    - Dict[str, Any]: Dictionary containing table schema information.
+    Retrieve schema information for a given PostgreSQL table.
     """
-    table_info = {'columns': {}, 'foreign_keys': [], 'indexes': [], 'sample_data': [], 'primary_keys': []}
+    table_info = {
+        'columns': {},
+        'foreign_keys': [],
+        'indexes': [],
+        'sample_data': [],
+        'primary_keys': [],
+        # Placeholder for additional constraints/triggers if needed:
+        'constraints': [],
+        'triggers': []
+    }
 
     # Get column information
     cursor.execute("""
@@ -231,7 +237,7 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
             'nullable': col[2] == 'YES',
             'default': col[3],
             'max_length': col[4],
-            'primary_key': False  # Will be updated later if it's a primary key
+            'primary_key': False  # Will update below
         }
 
     # Get primary key information
@@ -239,10 +245,10 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
         SELECT kcu.column_name
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu
-        ON tc.constraint_name = kcu.constraint_name
+          ON tc.constraint_name = kcu.constraint_name
         WHERE tc.table_name = %s AND tc.constraint_type = 'PRIMARY KEY';
     """, [table_name])
-    pk_columns = [col[0] for col in cursor.fetchall()]
+    pk_columns = [row[0] for row in cursor.fetchall()]
     for col in pk_columns:
         if col in table_info['columns']:
             table_info['columns'][col]['primary_key'] = True
@@ -258,11 +264,11 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
             rc.delete_rule AS on_delete
         FROM information_schema.table_constraints AS tc
         JOIN information_schema.key_column_usage AS kcu
-        ON tc.constraint_name = kcu.constraint_name
+          ON tc.constraint_name = kcu.constraint_name
         JOIN information_schema.constraint_column_usage AS ccu
-        ON tc.constraint_name = ccu.constraint_name
+          ON tc.constraint_name = ccu.constraint_name
         JOIN information_schema.referential_constraints AS rc
-        ON tc.constraint_name = rc.constraint_name
+          ON tc.constraint_name = rc.constraint_name
         WHERE tc.table_name = %s AND tc.constraint_type = 'FOREIGN KEY';
     """, [table_name])
     fkeys = cursor.fetchall()
@@ -285,8 +291,13 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """, [table_name])
     indexes = cursor.fetchall()
     for idx_name, idx_def in indexes:
-        # Extract columns from index definition
-        idx_columns = idx_def.split('(')[1].rstrip(')').split(', ')
+        # Extract index columns from definition (this is a simple heuristic)
+        try:
+            idx_columns_part = idx_def.split('(')[1].rstrip(')')
+            idx_columns = [col.strip() for col in idx_columns_part.split(',')]
+        except Exception as e:
+            logger.warning(f"Failed to extract index columns from {idx_def}: {e}")
+            idx_columns = []
         is_unique = 'UNIQUE' in idx_def.upper()
         table_info['indexes'].append({
             'name': idx_name,
@@ -294,9 +305,8 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
             'columns': idx_columns
         })
 
-    # Get sample data
-    cursor.execute(sql.SQL("SELECT * FROM {} LIMIT 5;").format(
-        sql.Identifier(table_name)))
+    # Get sample data using safe identifier formatting
+    cursor.execute(sql.SQL("SELECT * FROM {} LIMIT 5;").format(sql.Identifier(table_name)))
     sample_data = cursor.fetchall()
     if sample_data:
         column_names = [desc[0] for desc in cursor.description]
@@ -306,38 +316,87 @@ def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
 
     return table_info
 
-def generate_ora_representation(table_name: str, table_info: Dict[str, Any]) -> str:
+# --- Generate Structured JSON Schema Representation ---
+
+def generate_json_schema(table_name: str, table_info: Dict[str, Any]) -> str:
     """
-    Generates an Object-Relation-Attribute (ORA) representation of the table schema.
-
-    Parameters:
-    - table_name (str): The name of the table.
-    - table_info (Dict[str, Any]): The schema information for the table.
-
-    Returns:
-    - str: The ORA representation of the table.
+    Generates a JSON representation of the table schema including attributes,
+    relationships, indexes, constraints, and triggers.
     """
-    ora_parts = [f"Object: {table_name}"]
-    attributes = []
-    relationships = []
+    schema = {
+        "object": table_name,
+        "attributes": [],
+        "relationships": [],
+        "indexes": table_info.get('indexes', []),
+        "constraints": table_info.get('constraints', []),
+        "triggers": table_info.get('triggers', []),
+        "sample_data": table_info.get('sample_data', [])
+    }
 
-    for col_name, col_details in table_info['columns'].items():
-        attr_desc = f"  Attribute: {col_name} (Type: {col_details['type']}"
-        if col_details.get('primary_key'):
-            attr_desc += ", Primary Key"
-        if not col_details['nullable']:
-            attr_desc += ", Not Null"
-        if col_details.get('default') is not None:
-            attr_desc += f", Default: {col_details['default']}"
-        attr_desc += ")"
-        attributes.append(attr_desc)
+    for col_name, details in table_info['columns'].items():
+        attribute = {
+            "name": col_name,
+            "type": details.get('type'),
+            "primary_key": details.get('primary_key', False),
+            "nullable": details.get('nullable', True),
+            "default": details.get('default'),
+            "max_length": details.get('max_length')
+        }
+        schema["attributes"].append(attribute)
 
-    for fk in table_info['foreign_keys']:
-        relationships.append(
-            f"  Relationship: References {fk['to_table']}.{fk['to_column']} via {fk['from_column']} (On Update: {fk['on_update']}, On Delete: {fk['on_delete']})"
-        )
+    for fk in table_info.get('foreign_keys', []):
+        relationship = {
+            "from_column": fk['from_column'],
+            "to_table": fk['to_table'],
+            "to_column": fk['to_column'],
+            "on_update": fk['on_update'],
+            "on_delete": fk['on_delete']
+        }
+        schema["relationships"].append(relationship)
 
-    ora_parts.extend(attributes)
-    ora_parts.extend(relationships)
+    return json.dumps(schema, indent=2)
 
-    return "\n".join(ora_parts)
+# --- Unified Schema Retrieval ---
+
+def get_all_schemas(
+    db_name: str,
+    db_type: str,
+    host: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Retrieve all table schemas from the specified database as a dictionary where
+    keys are table names and values are the structured schema representations.
+    """
+    # Build a cache key if needed (example: f"{db_type}:{db_name}:{host or 'localhost'}")
+    cache_key = f"{db_type}:{db_name}:{host or 'localhost'}"
+    if cache_key in _schema_cache:
+        logger.info("Returning cached schemas.")
+        return _schema_cache[cache_key]
+
+    schemas: Dict[str, Dict[str, Any]] = {}
+    with get_connection(db_name, db_type, host, user, password) as conn:
+        if conn is None:
+            logger.error("Database connection failed. Returning empty schemas.")
+            return {}
+
+        # Choose the appropriate extractor
+        if db_type.lower() == 'sqlite':
+            extractor: SchemaExtractor = SQLiteSchemaExtractor(conn)
+        elif db_type.lower() == 'postgresql':
+            extractor = PostgreSQLSchemaExtractor(conn)
+        else:
+            logger.error(f"Unsupported database type: {db_type}")
+            return {}
+
+        # Retrieve schemas for each table
+        for table in extractor.get_tables():
+            table_info = extractor.get_table_info(table)
+            # Generate a structured JSON schema representation
+            table_info['ora_representation'] = generate_json_schema(table, table_info)
+            schemas[table] = table_info
+
+    # Cache the result for future calls
+    _schema_cache[cache_key] = schemas
+    return schemas
