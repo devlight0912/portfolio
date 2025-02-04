@@ -682,9 +682,16 @@ if db_type == "SQLite":
                     selected_tables = options
             selected_tables = [table for table in selected_tables if table != "Select All"]
             colored_header(f"🔍 Selected Tables: {', '.join(selected_tables)}", color_name="blue-70", description="")
-            for table in selected_tables:
-                with st.expander(f"View Schema: {table} 📖", expanded=False):
-                    st.json(schemas[table])
+            if len(selected_tables) > 3:
+
+                    with st.expander("View All Table Schemas 📖", expanded=False):
+                        for table in selected_tables:
+                            with st.expander(f"Schema: {table}", expanded=False):
+                                st.json(schemas[table])
+            else:
+                for table in selected_tables:
+                    with st.expander(f"View Schema: {table} 📖", expanded=False):
+                        st.json(schemas[table])
 
             user_message = st.text_input(placeholder="Type your SQL query here...", key="user_message", label="Your Query 💬", label_visibility="hidden")
             if user_message:
