@@ -12,8 +12,6 @@ from abc import ABC, abstractmethod
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_schema_cache: Dict[str, Any] = {}
-
 def create_connection(
     db_name: str,
     db_type: str,
@@ -369,12 +367,6 @@ def get_all_schemas(
     Retrieve all table schemas from the specified database as a dictionary where
     keys are table names and values are the structured schema representations.
     """
-    # Build a cache key if needed (example: f"{db_type}:{db_name}:{host or 'localhost'}")
-    cache_key = f"{db_type}:{db_name}:{host or 'localhost'}"
-    if cache_key in _schema_cache:
-        logger.info("Returning cached schemas.")
-        return _schema_cache[cache_key]
-
     schemas: Dict[str, Dict[str, Any]] = {}
     with get_connection(db_name, db_type, host, user, password) as conn:
         if conn is None:
@@ -397,6 +389,4 @@ def get_all_schemas(
             table_info['ora_representation'] = generate_json_schema(table, table_info)
             schemas[table] = table_info
 
-    # Cache the result for future calls
-    _schema_cache[cache_key] = schemas
     return schemas

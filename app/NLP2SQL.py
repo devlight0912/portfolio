@@ -495,7 +495,8 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
 
         if decision_log:
             with st.expander("Decision Log", expanded=False):
-                st.markdown(build_markdown_decision_log(decision_log))
+                # Replace the old build_markdown_decision_log usage with our new function
+                display_decision_log_widgets(decision_log)
 
         sql_results = get_data(query, db_name, db_type, host, user, password)
 
@@ -675,6 +676,112 @@ def generate_detailed_error_message(error_message: str) -> str:
     prompt = f"Provide a detailed and user-friendly explanation for the following error message:\n\n{error_message}"
     detailed_error = get_completion_from_messages(SYSTEM_MESSAGE, prompt)
     return detailed_error.strip() if detailed_error else error_message
+
+def display_decision_log_widgets(decision_log: Dict) -> None:
+    """
+    Display the complete decision log in a more aesthetic way using Streamlit widgets.
+    Each section of the decision log is displayed in its own tab with appropriate formatting.
+    """
+    tabs = st.tabs([
+        "Input Details", "Paths", "Ambiguities", "Resolution",
+        "Chosen Path", "SQL Query", "Alternatives", "Feedback", "Summary"
+    ])
+
+    # Input Details Tab
+    with tabs[0]:
+        st.write("### Query Input Details")
+        for detail in decision_log.get("query_input_details", []):
+            st.write(f"- {detail}")
+
+        if decision_log.get("preprocessing_steps"):
+            st.write("### Preprocessing Steps")
+            for step in decision_log["preprocessing_steps"]:
+                st.write(f"- {step}")
+
+    # Paths Tab
+    with tabs[1]:
+        st.write("### Path Identification")
+        for i, path in enumerate(decision_log.get("path_identification", [])):
+            with st.expander(f"Path {i+1} (Score: {path['score']})", expanded=True):
+                st.write(f"**Description:** {path['description']}")
+                st.write("**Tables:**")
+                for table in path['tables']:
+                    st.write(f"- {table}")
+                st.write("**Columns:**")
+                for cols in path['columns']:
+                    st.write(f"- {', '.join(cols)}")
+
+    # Ambiguities Tab
+    with tabs[2]:
+        st.write("### Ambiguity Analysis")
+        if ambiguities := decision_log.get("ambiguity_detection"):
+            for ambiguity in ambiguities:
+                st.info(ambiguity)
+        else:
+            st.write("No ambiguities detected.")
+
+    # Resolution Tab
+    with tabs[3]:
+        st.write("### Resolution Criteria")
+        if criteria := decision_log.get("resolution_criteria"):
+            for criterion in criteria:
+                st.write(f"- {criterion}")
+        else:
+            st.write("No resolution criteria specified.")
+
+    # Chosen Path Tab
+    with tabs[4]:
+        st.write("### Selected Tables and Columns")
+        if chosen_path := decision_log.get("chosen_path_explanation"):
+            for item in chosen_path:
+                with st.expander(f"Table: {item['table']}", expanded=True):
+                    st.write("**Selected Columns:**")
+                    for col in item['columns']:
+                        st.write(f"- {col}")
+                    st.write(f"\n**Reason:** {item['reason']}")
+        else:
+            st.write("No path selection details available.")
+
+    # SQL Query Tab
+    with tabs[5]:
+        st.write("### Generated SQL Query")
+        if sql_query := decision_log.get("generated_sql_query"):
+            st.code(sql_query, language="sql")
+        else:
+            st.write("No SQL query generated.")
+
+    # Alternatives Tab
+    with tabs[6]:
+        st.write("### Alternative Approaches")
+        if alternatives := decision_log.get("alternative_paths"):
+            for alt in alternatives:
+                st.write(f"- {alt}")
+        else:
+            st.write("No alternative approaches identified.")
+
+    # Feedback Tab
+    with tabs[7]:
+        st.write("### Execution Feedback")
+        if feedback := decision_log.get("execution_feedback"):
+            for item in feedback:
+                if "error" in item.lower():
+                    st.error(item)
+                elif "warning" in item.lower():
+                    st.warning(item)
+                else:
+                    st.success(item)
+        else:
+            st.write("No execution feedback available.")
+
+    # Summary Tab
+    with tabs[8]:
+        st.write("### Summary")
+        if summary := decision_log.get("final_summary"):
+            st.write(summary)
+
+            if viz_suggestion := decision_log.get("visualization_suggestion"):
+                st.write("\n### Visualization Recommendation")
+                st.info(f"Suggested visualization type: {viz_suggestion}")
 
 # Database Setup
 db_type = st.sidebar.selectbox("Select Database Type 🗄️", options=["SQLite", "PostgreSQL"])
