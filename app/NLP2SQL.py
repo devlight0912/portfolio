@@ -689,31 +689,31 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Input Details Tab
     with tabs[0]:
-        st.write("### Query Input Details")
+        st.markdown("## 📝 Query Input Details")
         for detail in decision_log.get("query_input_details", []):
-            st.write(f"- {detail}")
-
+            st.markdown(f"- **{detail}**")
         if decision_log.get("preprocessing_steps"):
-            st.write("### Preprocessing Steps")
+            st.markdown("---")
+            st.markdown("### Preprocessing Steps")
             for step in decision_log["preprocessing_steps"]:
-                st.write(f"- {step}")
+                st.markdown(f"- {step}")
 
     # Paths Tab
     with tabs[1]:
-        st.write("### Path Identification")
+        st.markdown("## 🔍 Path Identification")
         for i, path in enumerate(decision_log.get("path_identification", [])):
             with st.expander(f"Path {i+1} (Score: {path['score']})", expanded=True):
-                st.write(f"**Description:** {path['description']}")
-                st.write("**Tables:**")
+                st.markdown(f"**Description**: {path['description']}")
+                st.caption("Tables:")
                 for table in path['tables']:
-                    st.write(f"- {table}")
-                st.write("**Columns:**")
+                    st.markdown(f"- {table}")
+                st.caption("Columns:")
                 for cols in path['columns']:
-                    st.write(f"- {', '.join(cols)}")
+                    st.markdown(f"- {', '.join(cols)}")
 
     # Ambiguities Tab
     with tabs[2]:
-        st.write("### Ambiguity Analysis")
+        st.markdown("## ❓ Ambiguity Analysis")
         if ambiguities := decision_log.get("ambiguity_detection"):
             for ambiguity in ambiguities:
                 st.info(ambiguity)
@@ -722,7 +722,7 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Resolution Tab
     with tabs[3]:
-        st.write("### Resolution Criteria")
+        st.markdown("## 🛠️ Resolution Criteria")
         if criteria := decision_log.get("resolution_criteria"):
             for criterion in criteria:
                 st.write(f"- {criterion}")
@@ -731,20 +731,20 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Chosen Path Tab
     with tabs[4]:
-        st.write("### Selected Tables and Columns")
+        st.markdown("## ✅ Selected Tables and Columns")
         if chosen_path := decision_log.get("chosen_path_explanation"):
             for item in chosen_path:
                 with st.expander(f"Table: {item['table']}", expanded=True):
-                    st.write("**Selected Columns:**")
+                    st.caption("Columns:")
                     for col in item['columns']:
-                        st.write(f"- {col}")
-                    st.write(f"\n**Reason:** {item['reason']}")
+                        st.markdown(f"- {col}")
+                    st.markdown(f"**Reason**: {item['reason']}")
         else:
             st.write("No path selection details available.")
 
     # SQL Query Tab
     with tabs[5]:
-        st.write("### Generated SQL Query")
+        st.markdown("## 🏷️ Generated SQL Query")
         if sql_query := decision_log.get("generated_sql_query"):
             st.code(sql_query, language="sql")
         else:
@@ -752,7 +752,7 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Alternatives Tab
     with tabs[6]:
-        st.write("### Alternative Approaches")
+        st.markdown("## 🔀 Alternative Approaches")
         if alternatives := decision_log.get("alternative_paths"):
             for alt in alternatives:
                 st.write(f"- {alt}")
@@ -761,7 +761,7 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Feedback Tab
     with tabs[7]:
-        st.write("### Execution Feedback")
+        st.markdown("## 💡 Execution Feedback")
         if feedback := decision_log.get("execution_feedback"):
             for item in feedback:
                 if "error" in item.lower():
@@ -775,7 +775,7 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
 
     # Summary Tab
     with tabs[8]:
-        st.write("### Summary")
+        st.markdown("## 📜 Summary")
         if summary := decision_log.get("final_summary"):
             st.write(summary)
 
