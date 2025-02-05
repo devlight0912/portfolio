@@ -679,89 +679,130 @@ def generate_detailed_error_message(error_message: str) -> str:
 
 def display_decision_log_widgets(decision_log: Dict) -> None:
     """
-    Display the complete decision log in a more aesthetic way using Streamlit widgets.
-    Each section of the decision log is displayed in its own tab with appropriate formatting.
+    Display the complete decision log with enhanced visual organization and styling.
+    Each section of the decision log is displayed in its own tab with appropriate formatting
+    and visual hierarchy.
     """
+    # Create custom CSS for better tab styling
+    st.markdown("""
+        <style>
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 8px 16px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Create tabs with professional labels
     tabs = st.tabs([
-        "Input Details", "Paths", "Ambiguities", "Resolution",
-        "Chosen Path", "SQL Query", "Alternatives", "Feedback", "Summary"
+        "Input Analysis",
+        "Paths",
+        "Ambiguities",
+        "Resolution",
+        "Selected Path",
+        "SQL Query",
+        "Alternatives",
+        "Feedback",
+        "Summary"
     ])
 
     # Input Details Tab
     with tabs[0]:
-        st.markdown("## 📝 Query Input Details")
+        st.markdown("### Query Input Details")
         for detail in decision_log.get("query_input_details", []):
-            st.markdown(f"- **{detail}**")
-        if decision_log.get("preprocessing_steps"):
-            st.markdown("---")
+            st.info(detail)
+
+        if preprocessing_steps := decision_log.get("preprocessing_steps"):
             st.markdown("### Preprocessing Steps")
-            for step in decision_log["preprocessing_steps"]:
-                st.markdown(f"- {step}")
+            for step in preprocessing_steps:
+                st.markdown(f"```\n{step}\n```")
 
     # Paths Tab
     with tabs[1]:
-        st.markdown("## 🔍 Path Identification")
-        for i, path in enumerate(decision_log.get("path_identification", [])):
-            with st.expander(f"Path {i+1} (Score: {path['score']})", expanded=True):
-                st.markdown(f"**Description**: {path['description']}")
-                st.caption("Tables:")
-                for table in path['tables']:
-                    st.markdown(f"- {table}")
-                st.caption("Columns:")
-                for cols in path['columns']:
-                    st.markdown(f"- {', '.join(cols)}")
+        st.markdown("### Path Identification")
+        for i, path in enumerate(decision_log.get("path_identification", []), 1):
+            with st.expander(f"Path {i} (Score: {path['score']})", expanded=i == 1):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"**Description**:")
+                    st.markdown(f"_{path['description']}_")
+                with col2:
+                    st.metric("Score", path['score'])
+
+                st.divider()
+
+                col3, col4 = st.columns(2)
+                with col3:
+                    st.markdown("**Tables**")
+                    for table in path['tables']:
+                        st.markdown(f"- `{table}`")
+                with col4:
+                    st.markdown("**Columns**")
+                    for cols in path['columns']:
+                        st.markdown(f"- `{', '.join(cols)}`")
 
     # Ambiguities Tab
     with tabs[2]:
-        st.markdown("## ❓ Ambiguity Analysis")
+        st.markdown("### Ambiguity Analysis")
         if ambiguities := decision_log.get("ambiguity_detection"):
             for ambiguity in ambiguities:
-                st.info(ambiguity)
+                st.warning(ambiguity)
         else:
-            st.write("No ambiguities detected.")
+            st.success("No ambiguities detected")
 
     # Resolution Tab
     with tabs[3]:
-        st.markdown("## 🛠️ Resolution Criteria")
+        st.markdown("### Resolution Criteria")
         if criteria := decision_log.get("resolution_criteria"):
-            for criterion in criteria:
-                st.write(f"- {criterion}")
+            for i, criterion in enumerate(criteria, 1):
+                st.markdown(f"**{i}.** {criterion}")
+                st.divider()
         else:
-            st.write("No resolution criteria specified.")
+            st.info("No resolution criteria specified")
 
     # Chosen Path Tab
     with tabs[4]:
-        st.markdown("## ✅ Selected Tables and Columns")
+        st.markdown("### Selected Tables and Columns")
         if chosen_path := decision_log.get("chosen_path_explanation"):
             for item in chosen_path:
-                with st.expander(f"Table: {item['table']}", expanded=True):
-                    st.caption("Columns:")
-                    for col in item['columns']:
-                        st.markdown(f"- {col}")
-                    st.markdown(f"**Reason**: {item['reason']}")
+                with st.expander(f"{item['table']}", expanded=True):
+                    st.markdown("#### Selected Columns:")
+                    cols = st.columns(min(3, len(item['columns'])))
+                    for i, col in enumerate(item['columns']):
+                        with cols[i % len(cols)]:
+                            st.code(col)
+
+                    st.markdown("#### Selection Rationale:")
+                    st.info(item['reason'])
         else:
-            st.write("No path selection details available.")
+            st.warning("No path selection details available")
 
     # SQL Query Tab
     with tabs[5]:
-        st.markdown("## 🏷️ Generated SQL Query")
+        st.markdown("### Generated SQL Query")
         if sql_query := decision_log.get("generated_sql_query"):
             st.code(sql_query, language="sql")
+            if st.button("Copy Query"):
+                st.write("Query copied to clipboard!")
+                st.session_state['clipboard'] = sql_query
         else:
-            st.write("No SQL query generated.")
+            st.error("No SQL query generated")
 
     # Alternatives Tab
     with tabs[6]:
-        st.markdown("## 🔀 Alternative Approaches")
+        st.markdown("### Alternative Approaches")
         if alternatives := decision_log.get("alternative_paths"):
-            for alt in alternatives:
-                st.write(f"- {alt}")
+            for i, alt in enumerate(alternatives, 1):
+                with st.expander(f"Alternative {i}", expanded=False):
+                    st.markdown(alt)
         else:
-            st.write("No alternative approaches identified.")
+            st.info("No alternative approaches identified")
 
     # Feedback Tab
     with tabs[7]:
-        st.markdown("## 💡 Execution Feedback")
+        st.markdown("### Execution Feedback")
         if feedback := decision_log.get("execution_feedback"):
             for item in feedback:
                 if "error" in item.lower():
@@ -771,17 +812,20 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
                 else:
                     st.success(item)
         else:
-            st.write("No execution feedback available.")
+            st.info("No execution feedback available")
 
     # Summary Tab
     with tabs[8]:
-        st.markdown("## 📜 Summary")
+        st.markdown("### Analysis Summary")
         if summary := decision_log.get("final_summary"):
-            st.write(summary)
+            st.markdown(f"**Key Findings:**")
+            st.markdown(f"_{summary}_")
 
             if viz_suggestion := decision_log.get("visualization_suggestion"):
-                st.write("\n### Visualization Recommendation")
-                st.info(f"Suggested visualization type: {viz_suggestion}")
+                st.divider()
+                st.markdown("### Visualization Recommendation")
+                st.success(f"Suggested visualization type: **{viz_suggestion}**")
+                st.markdown("_This chart type was selected based on the data structure and analysis goals._")
 
 # Database Setup
 db_type = st.sidebar.selectbox("Select Database Type 🗄️", options=["SQLite", "PostgreSQL"])

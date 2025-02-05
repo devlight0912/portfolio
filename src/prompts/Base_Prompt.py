@@ -44,7 +44,7 @@ For each table, a textual ORA representation is provided. This representation de
       "error": string | null,       // Error details if the query is invalid or cannot be generated. Include specific error type and location if applicable.
       "execution_plan": string | null, // The execution plan of the generated query (if available)
       "visualization_recommendation": enum("Bar Chart", "Line Chart", "Scatter Plot", "Area Chart", "Histogram", "Pie Chart", "Table") | null, // Recommended visualization type
-      "confidence_score": float,    // A score between 0.0 and 1.0 indicating the confidence in the generated query
+      "confidence_score": float,    // A score between 0 and 10 indicating the confidence in the generated query
       "reasoning": string | null,   // Detailed explanation of the reasoning process used to generate the query
       "alternative_queries": string[] | null // Alternative SQL queries if multiple interpretations are possible
     }}
@@ -62,10 +62,10 @@ For each table, a textual ORA representation is provided. This representation de
     *   Explain your choice of visualization based on the data types and relationships.
 
 4. **Confidence Scoring:**
-    *   **1.0:** Perfect schema match, clear intent, no ambiguity.
-    *   **0.8-0.9:** Good schema match, with minor assumptions.
-    *   **0.5-0.7:** Multiple possible interpretations, some ambiguity.
-    *   **<0.5:** Significant ambiguity or missing information.
+    *   **10:** Perfect schema match, clear intent, no ambiguity.
+    *   **8-9:** Good schema match, with minor assumptions.
+    *   **5-7:** Multiple possible interpretations, some ambiguity.
+    *   **<5:** Significant ambiguity or missing information.
 
 5. **Reasoning:**
     *   Provide a detailed explanation of the reasoning process.
