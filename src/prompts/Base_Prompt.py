@@ -86,6 +86,7 @@ For each table, a textual ORA representation is provided. This representation de
 """
 
 import json
+import logging as logger
 
 try:
     import orjson
@@ -95,20 +96,37 @@ except ImportError:
 
 from src.database import DB_Config
 
-def build_system_message(db_name, db_type, host=None, user=None, password=None):
+from typing import Optional
+
+def build_system_message(db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> str:
     """
     Dynamically fetches the latest schema via DB_Config and inserts it into SYSTEM_MESSAGE.
     Ensures efficient serialization and robust error handling.
+
+    Parameters:
+    - db_name (str): Name of the database.
+    - db_type (str): Type of the database (e.g., 'sqlite', 'postgresql').
+    - host (Optional[str]): Database host (for PostgreSQL).
+    - user (Optional[str]): Database user (for PostgreSQL).
+    - password (Optional[str]): Database password (for PostgreSQL).
+
+    Returns:
+    - str: The system message with the inserted schema.
     """
-    schemas = DB_Config.get_all_schemas(db_name, db_type, host, user, password)
-    if not schemas:
-        # Handle the case of empty or failed schema retrieval.
+    try:
+        schemas = DB_Config.get_all_schemas(db_name, db_type, host, user, password)
+        if not schemas:
+            logger.warning("No schemas retrieved. Returning default system message.")
+            return SYSTEM_MESSAGE.format(schemas="{}")
+
+        # Efficient JSON serialization for schema data
+        if use_orjson:
+            serialized_schemas = orjson.dumps(schemas).decode('utf-8')
+        else:
+            serialized_schemas = json.dumps(schemas, separators=(',', ':'))
+
+        logger.info("System message built successfully.")
+        return SYSTEM_MESSAGE.format(schemas=serialized_schemas)
+    except Exception as e:
+        logger.exception("Error while building system message.")
         return SYSTEM_MESSAGE.format(schemas="{}")
-
-    # Efficient JSON serialization for schema data
-    if use_orjson:
-        serialized_schemas = orjson.dumps(schemas).decode('utf-8')
-    else:
-        serialized_schemas = json.dumps(schemas, separators=(',', ':'))
-
-    return SYSTEM_MESSAGE.format(schemas=serialized_schemas)

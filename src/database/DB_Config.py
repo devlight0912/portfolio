@@ -7,10 +7,44 @@ import logging
 import json
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
+import psycopg2.pool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Create a connection pool for PostgreSQL
+pg_pool = None
+
+def create_pg_pool(minconn: int, maxconn: int, dbname: str, user: str, password: str, host: str) -> None:
+    """
+    Create a PostgreSQL connection pool.
+
+    Parameters:
+    - minconn (int): Minimum number of connections in the pool.
+    - maxconn (int): Maximum number of connections in the pool.
+    - dbname (str): Name of the database.
+    - user (str): Database user.
+    - password (str): Database password.
+    - host (str): Database host.
+    """
+    global pg_pool
+    pg_pool = psycopg2.pool.SimpleConnectionPool(minconn, maxconn, dbname=dbname, user=user, password=password, host=host)
+    if pg_pool:
+        logger.info("PostgreSQL connection pool created successfully.")
+    else:
+        logger.error("Failed to create PostgreSQL connection pool.")
+
+@contextmanager
+def get_pg_connection():
+    """
+    Context manager for getting a connection from the PostgreSQL connection pool.
+    """
+    conn = pg_pool.getconn()
+    try:
+        yield conn
+    finally:
+        pg_pool.putconn(conn)
 
 def create_connection(
     db_name: str,
@@ -21,16 +55,23 @@ def create_connection(
 ) -> Optional[Union[sqlite3.Connection, psycopg2.extensions.connection]]:
     """
     Create a database connection for either SQLite or PostgreSQL.
+
+    Parameters:
+    - db_name (str): Name of the database.
+    - db_type (str): Type of the database (e.g., 'sqlite', 'postgresql').
+    - host (Optional[str]): Database host (for PostgreSQL).
+    - user (Optional[str]): Database user (for PostgreSQL).
+    - password (Optional[str]): Database password (for PostgreSQL).
+
+    Returns:
+    - Optional[Union[sqlite3.Connection, psycopg2.extensions.connection]]: Database connection object or None if connection fails.
     """
     try:
         if db_type.lower() == 'postgresql':
-            conn = psycopg2.connect(
-                dbname=db_name,
-                user=user,
-                password=password,
-                host=host
-            )
-            logger.info("Connected to PostgreSQL database.")
+            if not pg_pool:
+                create_pg_pool(1, 10, db_name, user, password, host)
+            conn = pg_pool.getconn()
+            logger.info("Connected to PostgreSQL database using connection pool.")
         elif db_type.lower() == 'sqlite':
             conn = sqlite3.connect(db_name)
             logger.info("Connected to SQLite database.")
@@ -68,6 +109,17 @@ def query_database(
 ) -> pd.DataFrame:
     """
     Execute an SQL query and return the results as a DataFrame.
+
+    Parameters:
+    - query (str): SQL query to execute.
+    - db_name (str): Name of the database.
+    - db_type (str): Type of the database (e.g., 'sqlite', 'postgresql').
+    - host (Optional[str]): Database host (for PostgreSQL).
+    - user (Optional[str]): Database user (for PostgreSQL).
+    - password (Optional[str]): Database password (for PostgreSQL).
+
+    Returns:
+    - pd.DataFrame: DataFrame containing the query results.
     """
     with get_connection(db_name, db_type, host, user, password) as conn:
         if conn is None:
@@ -139,6 +191,13 @@ class PostgreSQLSchemaExtractor(SchemaExtractor):
 def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
     Retrieve schema information for a given SQLite table.
+
+    Parameters:
+    - cursor: SQLite cursor object.
+    - table_name (str): Name of the table.
+
+    Returns:
+    - Dict[str, Any]: Dictionary containing table schema information.
     """
     table_info = {
         'columns': {},
@@ -205,6 +264,13 @@ def get_sqlite_table_info(cursor, table_name: str) -> Dict[str, Any]:
 def get_postgresql_table_info(cursor, table_name: str) -> Dict[str, Any]:
     """
     Retrieve schema information for a given PostgreSQL table.
+
+    Parameters:
+    - cursor: PostgreSQL cursor object.
+    - table_name (str): Name of the table.
+
+    Returns:
+    - Dict[str, Any]: Dictionary containing table schema information.
     """
     table_info = {
         'columns': {},
@@ -320,6 +386,13 @@ def generate_json_schema(table_name: str, table_info: Dict[str, Any]) -> str:
     """
     Generates a JSON representation of the table schema including attributes,
     relationships, indexes, constraints, and triggers.
+
+    Parameters:
+    - table_name (str): Name of the table.
+    - table_info (Dict[str, Any]): Dictionary containing table schema information.
+
+    Returns:
+    - str: JSON string representing the table schema.
     """
     schema = {
         "object": table_name,
@@ -366,6 +439,16 @@ def get_all_schemas(
     """
     Retrieve all table schemas from the specified database as a dictionary where
     keys are table names and values are the structured schema representations.
+
+    Parameters:
+    - db_name (str): Name of the database.
+    - db_type (str): Type of the database (e.g., 'sqlite', 'postgresql').
+    - host (Optional[str]): Database host (for PostgreSQL).
+    - user (Optional[str]): Database user (for PostgreSQL).
+    - password (Optional[str]): Database password (for PostgreSQL).
+
+    Returns:
+    - Dict[str, Dict[str, Any]]: Dictionary containing table schemas.
     """
     schemas: Dict[str, Dict[str, Any]] = {}
     with get_connection(db_name, db_type, host, user, password) as conn:

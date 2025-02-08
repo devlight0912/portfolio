@@ -4,11 +4,14 @@ streamlit-nested-layout
 streamlit-extras
 # Data processing and visualization
 pandas
-altair
 openpyxl
+plotly
+statsmodels
 # Database
 psycopg2-binary
 sqlalchemy
 # API and configuration
 python-dotenv
 openai
+# Add statsmodels for statistical models
+statsmodels

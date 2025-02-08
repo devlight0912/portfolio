@@ -7,17 +7,20 @@ import re
 import logging
 from typing import Dict, List, Optional, Union, TypedDict
 import pandas as pd
-import altair as alt
+import plotly.express as px
 import streamlit as st
-import streamlit_nested_layout
 from dotenv import load_dotenv
 from streamlit_extras.colored_header import colored_header
+import streamlit_nested_layout
 import numpy as np
-from streamlit_extras.chart_container import chart_container
 from streamlit_extras.dataframe_explorer import dataframe_explorer
 import src.database.DB_Config as DB_Config
 from src.prompts.Base_Prompt import SYSTEM_MESSAGE
 from src.api.LLM_Config import get_completion_from_messages
+import hashlib
+from datetime import datetime
+from time import time
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -47,8 +50,40 @@ def load_system_message(schemas: dict) -> str:
     """Load and format the system message with JSON-serialized schemas."""
     return SYSTEM_MESSAGE.format(schemas=json.dumps(schemas, indent=2))
 
+# Add input validation to prevent SQL injection and other security vulnerabilities
+
+def validate_sql_query(query: str) -> bool:
+    """
+    Ensure the SQL query is valid and safe (select queries only).
+
+    Parameters:
+    - query (str): The SQL query to validate.
+
+    Returns:
+    - bool: True if the query is valid and safe, False otherwise.
+    """
+    if not isinstance(query, str):
+        return False
+
+    disallowed_keywords = r'\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|EXEC)\b'
+
+    if re.search(disallowed_keywords, query, re.IGNORECASE):
+        return False
+
+    if not query.strip().lower().startswith(('select', 'with')):
+        return False
+
+    if query.count('(') != query.count(')'):
+        return False
+
+    return True
+
 def get_data(query: str, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> pd.DataFrame:
     """Run the specified query and return the resulting DataFrame."""
+    if not validate_sql_query(query):
+        logger.error("Invalid or unsafe SQL query.")
+        return pd.DataFrame()
+
     return DB_Config.query_database(query, db_name, db_type, host, user, password)
 
 def save_temp_file(uploaded_file) -> str:
@@ -365,63 +400,29 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
     # Join with proper line breaks and clean up any extra spaces
     return "\n".join(line.rstrip() for line in markdown_log)
 
-def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> Optional[alt.Chart]:
-    """Construct an Altair chart based on user-selected chart type and columns."""
-    base_chart = alt.Chart(df).configure_title(fontSize=18, fontWeight='bold', font='Roboto')
-
+def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> Optional[any]:
+    """Construct a Plotly chart without color column and trendline options."""
     try:
-        chart_props = {
-            "Bar Chart": base_chart.mark_bar(),
-            "Line Chart": base_chart.mark_line(),
-            "Scatter Plot": base_chart.mark_circle(),
-            "Area Chart": base_chart.mark_area(),
-            "Histogram": base_chart.mark_bar(),
-            "Pie Chart": base_chart.mark_arc(),
-            "Box Plot": base_chart.mark_boxplot()
-        }
-
-        if chart_type not in chart_props:
+        if chart_type == "Bar Chart":
+            fig = px.bar(df, x=x_col, y=y_col, title=f"Bar Chart of {y_col} by {x_col}")
+        elif chart_type == "Line Chart":
+            fig = px.line(df, x=x_col, y=y_col, title=f"Line Chart of {y_col} by {x_col}", markers=True)
+        elif chart_type == "Scatter Plot":
+            fig = px.scatter(df, x=x_col, y=y_col, title=f"Scatter Plot of {y_col} vs {x_col}", hover_data=[x_col, y_col])
+        elif chart_type == "Area Chart":
+            fig = px.area(df, x=x_col, y=y_col, title=f"Area Chart of {y_col} by {x_col}")
+        elif chart_type == "Histogram":
+            fig = px.histogram(df, x=x_col, nbins=30, title=f"Histogram of {x_col}")
+        elif chart_type == "Pie Chart":
+            fig = px.pie(df, names=x_col, values=y_col, title=f"Pie Chart of {x_col}")
+        elif chart_type == "Box Plot":
+            fig = px.box(df, x=x_col, y=y_col, title=f"Box Plot of {y_col} grouped by {x_col}")
+        else:
             st.warning("Chart type not recognized.")
             return None
 
-        if chart_type == "Histogram":
-            chart = chart_props[chart_type].encode(
-                alt.X(x_col, bin=alt.Bin(maxbins=30), title=x_col),
-                y=alt.Y('count()', title='Count')
-            ).properties(
-                width='container',
-                height=400
-            ).interactive()
-        elif chart_type == "Pie Chart":
-            # Example pie chart code:
-            chart = alt.Chart(df).mark_arc().encode(
-                theta=alt.Theta(field=y_col, type="quantitative"),
-                color=alt.Color(field=x_col, type="nominal")
-            ).properties(width='container', height=400).interactive()
-            return chart
-        elif chart_type == "Box Plot":
-            # Example box plot code:
-            chart = alt.Chart(df).mark_boxplot().encode(
-                x=alt.X(x_col, title=x_col),
-                y=alt.Y(y_col, title=y_col)
-            ).properties(width='container', height=400).interactive()
-            return chart
-        else:
-            encoding = {
-                "x": alt.X(x_col, title=x_col),
-                "y": alt.Y(y_col, title=y_col)
-            }
-            if chart_type in ["Bar Chart", "Line Chart"]:
-                encoding["color"] = alt.Color(y_col, legend=None)
-            elif chart_type == "Scatter Plot":
-                encoding["tooltip"] = [x_col, y_col]
-
-            chart = chart_props[chart_type].encode(**encoding).properties(
-                width='container',
-                height=400
-            ).interactive()
-
-        return chart
+        fig.update_layout(autosize=True, margin=dict(l=20, r=20, t=40, b=20))
+        return fig
 
     except Exception as e:
         st.error(f"Error generating the chart: {e}")
@@ -429,7 +430,7 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
         return None
 
 def display_summary_statistics(df: pd.DataFrame) -> None:
-    """Show numeric and categorical data summaries, along with basic visualizations."""
+    """Show enhanced numeric and categorical summaries with advanced statistics."""
     if df.empty:
         st.warning("The DataFrame is empty. Unable to display summary statistics.")
         return
@@ -437,40 +438,66 @@ def display_summary_statistics(df: pd.DataFrame) -> None:
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns
 
-    tab1, tab2 = st.tabs(["Numeric Summary Statistics", "Categorical Data Insights"])
+    tab1, tab2, tab3 = st.tabs(["Numeric Summary", "Categorical Analysis", "Advanced Stats"])
 
-    if not numeric_cols.empty:
-        with tab1:
-            numeric_stats = df[numeric_cols].describe().T
-            numeric_stats['median'] = df[numeric_cols].median()
-            numeric_stats['mode'] = df[numeric_cols].mode().fillna(0).iloc[0]
-            numeric_stats['iqr'] = numeric_stats['75%'] - numeric_stats['25%']
-            numeric_stats['skew'] = df[numeric_cols].skew()
-            numeric_stats['kurt'] = df[numeric_cols].kurt()
+    # Numeric Summary Tab
+    with tab1:
+        st.markdown("### Numeric Summary Statistics")
+        stats_df = df[numeric_cols].describe().T
+        stats_df['median'] = df[numeric_cols].median()
+        stats_df['mode'] = df[numeric_cols].mode().iloc[0]
+        stats_df['variance'] = df[numeric_cols].var()
+        stats_df['iqr'] = stats_df['75%'] - stats_df['25%']
+        stats_df['skew'] = df[numeric_cols].skew()
+        stats_df['kurtosis'] = df[numeric_cols].kurt()
+        stats_df['coef_var'] = df[numeric_cols].std() / df[numeric_cols].mean()
+        st.dataframe(stats_df.style.format("{:.2f}").highlight_max(axis=0, color="lightgreen"))
 
-            st.markdown("### Numeric Summary Statistics")
-            st.dataframe(numeric_stats.style.format("{:.2f}").highlight_max(axis=0, color="lightgreen"))
+        for col in numeric_cols:
+            st.markdown(f"**Distribution of {col}**")
+            hist_fig = px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}")
+            st.plotly_chart(hist_fig, use_container_width=True)
+            box_fig = px.box(df, y=col, title=f"Box Plot of {col}")
+            st.plotly_chart(box_fig, use_container_width=True)
 
-            for col in numeric_cols:
-                st.markdown(f"#### {col}")
-                chart = alt.Chart(df).mark_bar().encode(
-                    alt.X(col, bin=alt.Bin(maxbins=30), title=f"Distribution of {col}"),
-                    y='count()'
-                ).properties(
-                    width='container',
-                    height=200
-                ).interactive()
-                st.altair_chart(chart, use_container_width=True)
+    # Categorical Analysis Tab
+    with tab2:
+        st.markdown("### Categorical Data Insights")
+        for col in non_numeric_cols:
+            st.markdown(f"**Frequency of {col}**")
+            freq_table = df[col].value_counts().reset_index()
+            freq_table.columns = ['Category', 'Count']
+            freq_table['Percentage'] = (freq_table['Count'] / len(df) * 100).round(2)
+            st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
+            if freq_table.shape[0] <= 10:
+                pie_fig = px.pie(freq_table, names='Category', values='Count', title=f"Pie Chart for {col}")
+                st.plotly_chart(pie_fig, use_container_width=True)
+            else:
+                bar_fig = px.bar(freq_table, x='Category', y='Count', title=f"Bar Chart for {col}")
+                st.plotly_chart(bar_fig, use_container_width=True)
 
-    if not non_numeric_cols.empty:
-        with tab2:
-            st.markdown("### Categorical Data Insights")
-            for col in non_numeric_cols:
-                st.markdown(f"**{col} Frequency**")
-                freq_table = df[col].value_counts().reset_index()
-                freq_table.columns = ['Category', 'Count']
-                freq_table['Percentage'] = (freq_table['Count'] / len(df) * 100).round(2)
-                st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
+    # Advanced Stats Tab
+    with tab3:
+        st.markdown("### Advanced Statistics")
+        st.markdown("**Missing Data Analysis**")
+        missing_df = df.isnull().sum().reset_index()
+        missing_df.columns = ['Column', 'Missing Values']
+        missing_df['Percentage'] = (missing_df['Missing Values'] / len(df) * 100).round(2)
+        st.table(missing_df.style.format({"Percentage": "{:.2f}%"}))
+
+        st.markdown("**Correlation Matrix**")
+        if len(numeric_cols) >= 2:
+            corr = df[numeric_cols].corr()
+            heat_fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation Matrix")
+            st.plotly_chart(heat_fig, use_container_width=True)
+        else:
+            st.info("Not enough numeric columns for correlation analysis.")
+
+        st.markdown("**Combined Distribution Overview**")
+        if numeric_cols.size:
+            melted_df = df.melt(value_vars=numeric_cols, var_name="Variable", value_name="Value")
+            dist_fig = px.histogram(melted_df, x="Value", color="Variable", nbins=30, title="Combined Distribution")
+            st.plotly_chart(dist_fig, use_container_width=True)
 
 def handle_query_response(response: dict, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> None:
     """Process LLM-generated SQL query, display results, and handle visualizations."""
@@ -498,7 +525,9 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
                 # Replace the old build_markdown_decision_log usage with our new function
                 display_decision_log_widgets(decision_log)
 
+        start_time = time()
         sql_results = get_data(query, db_name, db_type, host, user, password)
+        execution_time = time() - start_time
 
         if sql_results.empty:
             no_result_reason = "The query executed successfully but did not match any records in the database."
@@ -515,7 +544,7 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
 
         for col in sql_results.select_dtypes(include=['object']):
             try:
-                sql_results[col] = pd.to_datetime(sql_results[col])
+                sql_results[col] = pd.to_datetime(sql_results[col], format='%Y-%m-%d %H:%M:%S')
             except (ValueError, TypeError):
                 pass
 
@@ -523,33 +552,57 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
         filtered_results = dataframe_explorer(sql_results, case=False)
         st.dataframe(filtered_results, use_container_width=True, height=600)
 
-        colored_header("Summary Statistics and Export Options", color_name="blue-70", description="")
+        colored_header("Summary Statistics", color_name="blue-70", description="")
         display_summary_statistics(filtered_results)
+
+        performance_metrics = analyze_query_performance(
+            query,
+            execution_time,
+            len(sql_results)
+        )
+
+        with st.expander("🔍 Query Performance Analysis", expanded=True):
+            st.markdown("### Performance Metrics")
+
+            # Display execution metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Execution Time", f"{performance_metrics['execution_time']:.3f}s")
+            with col2:
+                st.metric("Rows Returned", performance_metrics['rows_returned'])
+            with col3:
+                st.metric("Rows/Second", f"{performance_metrics['rows_per_second']:.0f}")
+            with col4:
+                st.metric("Performance", performance_metrics['performance_class'])
+
+            # Display optimization suggestions
+            if performance_metrics['suggestions']:
+                st.markdown("### Optimization Suggestions")
+                for suggestion in performance_metrics['suggestions']:
+                    if suggestion['type'] == 'error':
+                        st.error(suggestion['message'])
+                    elif suggestion['type'] == 'warning':
+                        st.warning(suggestion['message'])
+                    else:
+                        st.info(suggestion['message'])
+
+        # Add a colored header to separate the Visualization section from Summary Statistics
+        colored_header("Visualization Section", color_name="blue-70", description="")
 
         if len(filtered_results.columns) >= 2:
             with st.sidebar.expander("📊 Visualization Options", expanded=True):
                 numerical_cols = filtered_results.select_dtypes(include=[np.number]).columns.tolist()
                 categorical_cols = filtered_results.select_dtypes(include=['object', 'category']).columns.tolist()
 
-                suggested_x, suggested_y = None, None
-                if numerical_cols:
-                    suggested_x = numerical_cols[0]
-                    suggested_y = numerical_cols[1] if len(numerical_cols) > 1 else (categorical_cols[0] if categorical_cols else None)
-                elif categorical_cols:
-                    suggested_x = categorical_cols[0]
-                    suggested_y = categorical_cols[1] if len(categorical_cols) > 1 else None
-
-                if not suggested_x:
-                    suggested_x = filtered_results.columns[0] if not filtered_results.columns.empty else 'Column1'
-                if not suggested_y:
-                    suggested_y = filtered_results.columns[1] if len(filtered_results.columns) > 1 else (filtered_results.columns[0] if not filtered_results.columns.empty else 'Column2')
+                # Suggest default X and Y columns
+                suggested_x = numerical_cols[0] if numerical_cols else filtered_results.columns[0]
+                suggested_y = numerical_cols[1] if len(numerical_cols) > 1 else (filtered_results.columns[1] if len(filtered_results.columns) > 1 else filtered_results.columns[0])
 
                 x_options = [f"{col} ⭐" if col == suggested_x else col for col in filtered_results.columns]
                 y_options = [f"{col} ⭐" if col == suggested_y else col for col in filtered_results.columns]
 
                 x_col = st.selectbox("Select X-axis Column", options=x_options, index=x_options.index(f"{suggested_x} ⭐") if f"{suggested_x} ⭐" in x_options else 0, key="x_axis")
                 y_col = st.selectbox("Select Y-axis Column", options=y_options, index=y_options.index(f"{suggested_y} ⭐") if f"{suggested_y} ⭐" in y_options else 0, key="y_axis")
-
                 x_col_clean = x_col.replace(" ⭐", "")
                 y_col_clean = y_col.replace(" ⭐", "")
 
@@ -569,14 +622,12 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
                     help=f"Recommended Chart Type: {suggested_chart_type}",
                     key="chart_type"
                 )
-
                 chart_type_clean = chart_type.replace(" ⭐", "")
 
             if chart_type_clean != "None" and x_col_clean and y_col_clean:
                 chart = create_chart(filtered_results, chart_type_clean, x_col_clean, y_col_clean)
                 if chart:
-                    with chart_container(data=filtered_results):
-                        st.altair_chart(chart, use_container_width=True)
+                    st.plotly_chart(chart, use_container_width=True)
 
         export_format = st.selectbox("Select Export Format", options=["CSV", "Excel", "JSON"], key="export_format")
         export_results(filtered_results, export_format)
@@ -592,24 +643,6 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
         detailed_error = generate_detailed_error_message(str(e))
         st.error(f"An unexpected error occurred: {detailed_error}")
         logger.exception(f"Unexpected error: {e}")
-
-def validate_sql_query(query: str) -> bool:
-    """Ensure the SQL query is valid and safe (select queries only)."""
-    if not isinstance(query, str):
-        return False
-
-    disallowed_keywords = r'\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|EXEC)\b'
-
-    if re.search(disallowed_keywords, query, re.IGNORECASE):
-        return False
-
-    if not query.strip().lower().startswith(('select', 'with')):
-        return False
-
-    if query.count('(') != query.count(')'):
-        return False
-
-    return True
 
 def export_results(sql_results: pd.DataFrame, export_format: str) -> None:
     """Allow the user to download query results in CSV, Excel, or JSON format."""
@@ -826,6 +859,55 @@ def display_decision_log_widgets(decision_log: Dict) -> None:
                 st.markdown("### Visualization Recommendation")
                 st.success(f"Suggested visualization type: **{viz_suggestion}**")
                 st.markdown("_This chart type was selected based on the data structure and analysis goals._")
+
+def analyze_query_performance(query: str, execution_time: float, row_count: int) -> dict:
+    """Analyze query performance and suggest optimizations."""
+    performance_metrics = {
+        "execution_time": execution_time,
+        "rows_returned": row_count,
+        "rows_per_second": row_count / execution_time if execution_time > 0 else 0,
+        "suggestions": []
+    }
+
+    # Basic query analysis
+    query_lower = query.lower()
+
+    # Check for SELECT *
+    if "select *" in query_lower:
+        performance_metrics["suggestions"].append({
+            "type": "warning",
+            "message": "Consider specifying required columns instead of SELECT * to improve performance"
+        })
+
+    # Check for missing WHERE clause
+    if "where" not in query_lower:
+        performance_metrics["suggestions"].append({
+            "type": "info",
+            "message": "Query has no WHERE clause - consider adding filters if large data set"
+        })
+
+    # Check for potential cartesian products
+    if query_lower.count("join") > query_lower.count("on"):
+        performance_metrics["suggestions"].append({
+            "type": "error",
+            "message": "Possible cartesian product detected - ensure proper JOIN conditions"
+        })
+
+    # Performance classification
+    if execution_time < 0.1:
+        performance_metrics["performance_class"] = "Excellent"
+    elif execution_time < 0.5:
+        performance_metrics["performance_class"] = "Good"
+    elif execution_time < 2.0:
+        performance_metrics["performance_class"] = "Fair"
+    else:
+        performance_metrics["performance_class"] = "Poor"
+        performance_metrics["suggestions"].append({
+            "type": "warning",
+            "message": f"Query execution time ({execution_time:.2f}s) is high"
+        })
+
+    return performance_metrics
 
 # Database Setup
 db_type = st.sidebar.selectbox("Select Database Type 🗄️", options=["SQLite", "PostgreSQL"])

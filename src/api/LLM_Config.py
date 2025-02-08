@@ -27,6 +27,12 @@ if missing_vars:
 _client = None  # Private client variable
 
 def get_openai_client():
+    """
+    Get the AzureOpenAI client instance, initializing it if necessary.
+
+    Returns:
+    - AzureOpenAI: The initialized AzureOpenAI client instance.
+    """
     global _client
     if _client is None:
         try:
@@ -97,6 +103,7 @@ def get_completion_from_messages(
         )
         # For simplicity, return the first completion if n > 1
         completion = response.choices[0].message.content
+        logger.info("Completion fetched successfully from OpenAI API.")
         return completion
     except Exception as e:
         logger.exception("Error while fetching completion from OpenAI API.")
