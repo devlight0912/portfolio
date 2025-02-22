@@ -7,6 +7,7 @@
 <div align="center">
 
 [![Made with Azure OpenAI](https://img.shields.io/badge/Made%20with-Azure%20OpenAI-0078D4?style=for-the-badge&logo=microsoft)](https://azure.microsoft.com/en-us/services/cognitive-services/openai/)
+[![Made with Gemini](https://img.shields.io/badge/Made%20with-Gemini-FF6F61?style=for-the-badge&logo=google)](https://developers.generativeai.google/)
 [![Built with Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit)](https://streamlit.io)
 [![Database](https://img.shields.io/badge/Database-PostgreSQL%20%7C%20SQLite-336791?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
 
@@ -26,9 +27,12 @@
 <summary>🎯 Core Features</summary>
 
 - **Natural Language to SQL** 🗣️ → 📝
-  - Convert text queries into SQL commands using Azure OpenAI models
+  - Convert text queries into SQL commands using **Azure OpenAI** or **Gemini** models
   - Intelligent query interpretation with detailed decision logs
   - Step-by-step reasoning for query generation
+- **Multimodal Interaction** 🎥
+  - Process both textual and visual inputs for richer query context
+  - Combine image data with text to enhance query generation
 - **Multi-Database Support** 🗄️
   - SQLite compatibility with file upload
   - PostgreSQL integration with secure connection
@@ -73,7 +77,7 @@
 
 ```mermaid
 graph LR
-    A[User Input] --> B[Azure OpenAI]
+    A[User Input] --> B[LLM Processing]
     B --> C[SQL Generator]
     C --> D[Database]
     D --> E[Results]
@@ -94,10 +98,16 @@ cd NLP2SQL
 ```bash
 # Create .env file
 cat << EOF > .env
+### 2a: Azure Configuration
+LLM_PROVIDER=AZURE
 OPENAI_ENDPOINT="https://[ENDPOINT_NAME].openai.azure.com"
 OPENAI_API_VERSION="2024-08-01-preview"
 OPENAI_API_KEY="YOUR AZURE OPENAI API KEY"
 MODEL_NAME="YOUR AZURE OPENAI MODEL NAME"
+
+### 2b: Gemini Configuration
+LLM_PROVIDER=GEMINI
+GEMINI_API_KEY="YOUR GEMINI API KEY"
 EOF
 ```
 
@@ -121,9 +131,10 @@ streamlit run app/NLP2SQL.py
 | :--------------------------------------------------------------------------------------------------: | :------------: |
 |     ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit)     | Web Interface  |
 | ![Azure OpenAI](https://img.shields.io/badge/Azure%20OpenAI-0078D4?style=flat-square&logo=microsoft) | NLP Processing |
+|     ![Gemini](https://img.shields.io/badge/Gemini-FF6F61?style=flat-square&logo=google)               | NLP Processing |
 |   ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=flat-square&logo=postgresql)    | PostgreSQL DB  |
 |         ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite)          |   SQLite DB    |
-|               ![Altair](https://img.shields.io/badge/Altair-005571?style=flat-square)                | Visualizations |
+|       ![Plotly](https://img.shields.io/badge/Plotly-FF7700?style=flat-square&logo=plotly)               | Visualizations |
 
 </div>
 
