@@ -21,6 +21,7 @@ import hashlib
 from datetime import datetime
 from time import time
 from collections import defaultdict
+from jsonschema import validate as json_validate, ValidationError
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -36,12 +37,64 @@ SUPPORTED_CHART_TYPES = {
     "Box Plot": "A chart that shows the distribution of data based on quartiles."
 }
 
-# Page Configuration
+# Page Configuration with dark theme details
 st.set_page_config(
     page_icon="🗃️",
-    page_title="Transforming Questions into Queries",
+    page_title="NLP2SQL",
     layout="wide"
 )
+
+def apply_custom_theme():
+    custom_css = f"""
+    <style>
+    /* Global Styles */
+    body, .stApp {{
+        background-color: #1e1e1e;
+        color: #64ffda;
+        font-family: sans-serif;
+    }}
+    /* Sidebar */
+    .css-1d391kg, .stSidebar .sidebar-content {{
+        background-color: #333333;
+    }}
+    /* Buttons */
+    .stButton>button {{
+        background-color: #00ADB5;
+        color: #fff;
+        border: none;
+    }}
+    /* Expander */
+    .stExpander {{
+        background-color: #333333;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem;
+    }}
+    .stExpander .stExanderHeader, .stExpander .stExanderContent {{
+        color: #64ffda;
+    }}
+    /* Tabs */
+    .stTabs [data-baseweb="tab"] {{
+        background-color: #333333;
+        border-radius: 6px;
+        padding: 0.5rem 1rem;
+        color: #64ffda;
+    }}
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+        background-color: #00ADB5;
+        color: #fff;
+    }}
+    /* Code Blocks */
+    pre {{
+        background-color: #333333;
+        color: #64ffda;
+    }}
+    </style>
+    """
+    st.markdown(custom_css, unsafe_allow_html=True)
+
+# Apply the custom theme early
+apply_custom_theme()
 
 load_dotenv()
 
@@ -78,12 +131,28 @@ def validate_sql_query(query: str) -> bool:
 
     return True
 
+# --- New helper: Validate that query uses existent tables/columns ---
+def validate_query_tables(query: str, schemas: dict) -> bool:
+    """
+    Very basic check: warn if any known schema table name is missing in the query.
+    This is a heuristic check.
+    """
+    lower_query = query.lower()
+    missing = []
+    for table in schemas.keys():
+        if table.lower() not in lower_query:
+            missing.append(table)
+    if missing:
+        logging.warning(f"LLM query does not mention these tables from the schema: {', '.join(missing)}")
+        return False
+    return True
+
 def get_data(query: str, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> pd.DataFrame:
-    """Run the specified query and return the resulting DataFrame."""
+    """Run the specified query and return the complete resulting DataFrame."""
     if not validate_sql_query(query):
         logger.error("Invalid or unsafe SQL query.")
         return pd.DataFrame()
-
+    # Removed pagination limit and offset
     return DB_Config.query_database(query, db_name, db_type, host, user, password)
 
 def save_temp_file(uploaded_file) -> str:
@@ -229,10 +298,15 @@ def generate_sql_query(user_message: str, schemas: dict, max_attempts: int = 1) 
             response = re.sub(r'^```json\s*', '', response.strip())
             response = re.sub(r'```$', '', response.strip())
             json_response = json.loads(response)
-
-            if not validate_response_structure(json_response):
-                logger.warning(f"Invalid response structure. Attempt: {attempt + 1}")
+            try:
+                json_validate(instance=json_response, schema=DECISION_LOG_SCHEMA)
+            except ValidationError as ve:
+                logger.warning(f"JSON schema validation error: {ve.message}. Attempt: {attempt + 1}")
                 continue
+
+            # Validate referenced tables in the generated SQL query
+            if not validate_query_tables(json_response.get('query', ''), schemas):
+                logger.warning("Generated SQL query contains non-existent tables/columns.")
 
             return {
                 "query": json_response.get('query'),
@@ -393,7 +467,7 @@ def build_markdown_decision_log(decision_log: Dict) -> str:
     if viz_suggestion := decision_log.get("visualization_suggestion"):
         markdown_log.extend([
             "### Visualization Recommendation",
-            f"Suggested visualization type: `{viz_suggestion}`",
+            f"Suggested visualization type: {repr(viz_suggestion)}",
             ""
         ])
 
@@ -430,74 +504,86 @@ def create_chart(df: pd.DataFrame, chart_type: str, x_col: str, y_col: str) -> O
         return None
 
 def display_summary_statistics(df: pd.DataFrame) -> None:
-    """Show enhanced numeric and categorical summaries with advanced statistics."""
+    """Show optimized summary statistics, filtering out unnecessary metrics."""
+
     if df.empty:
         st.warning("The DataFrame is empty. Unable to display summary statistics.")
         return
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+    datetime_cols = df.select_dtypes(include=['datetime']).columns
 
-    tab1, tab2, tab3 = st.tabs(["Numeric Summary", "Categorical Analysis", "Advanced Stats"])
+    # Tabs for organized statistics
+    tab1, tab2, tab3 = st.tabs(["Numeric Summary", "Categorical Analysis", "Missing Data & Correlations"])
 
-    # Numeric Summary Tab
+    # --- NUMERIC SUMMARY ---
     with tab1:
         st.markdown("### Numeric Summary Statistics")
-        stats_df = df[numeric_cols].describe().T
-        stats_df['median'] = df[numeric_cols].median()
-        stats_df['mode'] = df[numeric_cols].mode().iloc[0]
-        stats_df['variance'] = df[numeric_cols].var()
-        stats_df['iqr'] = stats_df['75%'] - stats_df['25%']
-        stats_df['skew'] = df[numeric_cols].skew()
-        stats_df['kurtosis'] = df[numeric_cols].kurt()
-        stats_df['coef_var'] = df[numeric_cols].std() / df[numeric_cols].mean()
-        st.dataframe(stats_df.style.format("{:.2f}").highlight_max(axis=0, color="lightgreen"))
+        filtered_stats = df[numeric_cols].describe().T
 
+        # Drop meaningless statistics
+        filtered_stats = filtered_stats.drop(columns=["count"], errors="ignore")
+
+        # Add only necessary statistics
+        filtered_stats["median"] = df[numeric_cols].median()
+        filtered_stats["iqr"] = filtered_stats["75%"] - filtered_stats["25%"]
+        filtered_stats["std"] = df[numeric_cols].std()
+
+        # Filter out columns with no variance (constant values)
+        filtered_stats = filtered_stats.loc[filtered_stats["std"] > 0]
+
+        # Format output
+        st.dataframe(filtered_stats.style.format("{:.2f}").highlight_max(axis=0, color="lightgreen"))
+
+        # Histograms for meaningful distributions
         for col in numeric_cols:
-            st.markdown(f"**Distribution of {col}**")
-            hist_fig = px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}")
-            st.plotly_chart(hist_fig, use_container_width=True)
-            box_fig = px.box(df, y=col, title=f"Box Plot of {col}")
-            st.plotly_chart(box_fig, use_container_width=True)
+            if df[col].nunique() > 1:
+                st.markdown(f"**Distribution of {col}**")
+                st.plotly_chart(px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}"), use_container_width=True)
 
-    # Categorical Analysis Tab
+    # --- CATEGORICAL ANALYSIS ---
     with tab2:
         st.markdown("### Categorical Data Insights")
-        for col in non_numeric_cols:
-            st.markdown(f"**Frequency of {col}**")
-            freq_table = df[col].value_counts().reset_index()
-            freq_table.columns = ['Category', 'Count']
-            freq_table['Percentage'] = (freq_table['Count'] / len(df) * 100).round(2)
-            st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
-            if freq_table.shape[0] <= 10:
-                pie_fig = px.pie(freq_table, names='Category', values='Count', title=f"Pie Chart for {col}")
-                st.plotly_chart(pie_fig, use_container_width=True)
-            else:
-                bar_fig = px.bar(freq_table, x='Category', y='Count', title=f"Bar Chart for {col}")
-                st.plotly_chart(bar_fig, use_container_width=True)
 
-    # Advanced Stats Tab
+        for col in categorical_cols:
+            value_counts = df[col].value_counts()
+            unique_count = value_counts.shape[0]
+
+            # Only show if the column has meaningful variability
+            if unique_count < len(df) * 0.8:
+                st.markdown(f"**{col}:** {unique_count} unique values")
+                freq_table = value_counts.reset_index()
+                freq_table.columns = ["Category", "Count"]
+                freq_table["Percentage"] = (freq_table["Count"] / len(df) * 100).round(2)
+                st.table(freq_table.style.format({"Percentage": "{:.2f}%"}))
+
+                if unique_count <= 10:
+                    st.plotly_chart(px.pie(freq_table, names="Category", values="Count", title=f"Pie Chart for {col}"), use_container_width=True)
+                else:
+                    st.plotly_chart(px.bar(freq_table, x="Category", y="Count", title=f"Bar Chart for {col}"), use_container_width=True)
+
+    # --- MISSING DATA & CORRELATIONS ---
     with tab3:
-        st.markdown("### Advanced Statistics")
-        st.markdown("**Missing Data Analysis**")
-        missing_df = df.isnull().sum().reset_index()
-        missing_df.columns = ['Column', 'Missing Values']
-        missing_df['Percentage'] = (missing_df['Missing Values'] / len(df) * 100).round(2)
-        st.table(missing_df.style.format({"Percentage": "{:.2f}%"}))
+        st.markdown("### Missing Data Analysis")
 
-        st.markdown("**Correlation Matrix**")
+        missing_data = df.isnull().sum()
+        missing_data = missing_data[missing_data > 0]
+        if not missing_data.empty:
+            missing_df = missing_data.reset_index()
+            missing_df.columns = ["Column", "Missing Values"]
+            missing_df["Percentage"] = (missing_df["Missing Values"] / len(df) * 100).round(2)
+            st.table(missing_df.style.format({"Percentage": "{:.2f}%"}))
+        else:
+            st.success("No missing data detected.")
+
+        st.markdown("### Correlation Matrix")
         if len(numeric_cols) >= 2:
-            corr = df[numeric_cols].corr()
-            heat_fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation Matrix")
+            correlation_matrix = df[numeric_cols].corr()
+            heat_fig = px.imshow(correlation_matrix, text_auto=True, aspect="auto", title="Correlation Matrix")
             st.plotly_chart(heat_fig, use_container_width=True)
         else:
             st.info("Not enough numeric columns for correlation analysis.")
-
-        st.markdown("**Combined Distribution Overview**")
-        if numeric_cols.size:
-            melted_df = df.melt(value_vars=numeric_cols, var_name="Variable", value_name="Value")
-            dist_fig = px.histogram(melted_df, x="Value", color="Variable", nbins=30, title="Combined Distribution")
-            st.plotly_chart(dist_fig, use_container_width=True)
 
 def handle_query_response(response: dict, db_name: str, db_type: str, host: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None) -> None:
     """Process LLM-generated SQL query, display results, and handle visualizations."""
@@ -522,18 +608,35 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
 
         if decision_log:
             with st.expander("Decision Log", expanded=False):
-                # Replace the old build_markdown_decision_log usage with our new function
                 display_decision_log_widgets(decision_log)
 
+        # --- For PostgreSQL: Run EXPLAIN ANALYZE before executing query ---
+        if db_type.lower() == 'postgresql':
+            with DB_Config.get_connection(db_name, db_type, host, user, password) as conn:
+                if conn:
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(f"EXPLAIN ANALYZE {query}")
+                        plan = "\n".join(row[0] for row in cur.fetchall())
+                        with st.expander("Query Optimization Hints", expanded=True):
+                            st.markdown("### Execution Plan (EXPLAIN ANALYZE)")
+                            st.code(plan, language="sql")
+                            if "Seq Scan" in plan:
+                                st.warning("The plan shows a sequential scan. Consider adding indexes on frequently queried columns.")
+                    except Exception as ex:
+                        st.error("Failed to run EXPLAIN ANALYZE.")
+                        logger.exception(f"EXPLAIN ANALYZE failed: {ex}")
+
+        # --- Measure execution time ---
         start_time = time()
         sql_results = get_data(query, db_name, db_type, host, user, password)
         execution_time = time() - start_time
 
         if sql_results.empty:
             no_result_reason = "The query executed successfully but did not match any records in the database."
-            if 'no valid SQL query generated' in decision_log.get("execution_feedback",[]):
+            if 'no valid SQL query generated' in decision_log.get("execution_feedback", []):
                 no_result_reason = "The query was not generated due to insufficient or ambiguous input."
-            elif 'SQL query validation failed' in decision_log.get("execution_feedback",[]):
+            elif 'SQL query validation failed' in decision_log.get("execution_feedback", []):
                 no_result_reason = "The query failed validation checks and was not executed."
             st.warning(f"The query returned no results because: {no_result_reason}")
             return
@@ -547,6 +650,13 @@ def handle_query_response(response: dict, db_name: str, db_type: str, host: Opti
                 sql_results[col] = pd.to_datetime(sql_results[col], format='%Y-%m-%d %H:%M:%S')
             except (ValueError, TypeError):
                 pass
+
+        # --- Handling Large Datasets: Prompt sampling if needed ---
+        if sql_results.shape[0] > 10000:
+            sample_choice = st.checkbox("Large dataset detected. Sample data for visualization?", value=True)
+            if sample_choice:
+                sql_results = sql_results.sample(10000)
+                st.info("Data has been sampled to 10,000 rows for visualization.")
 
         colored_header("Query Results and Filter", color_name="blue-70", description="")
         filtered_results = dataframe_explorer(sql_results, case=False)
@@ -868,30 +978,6 @@ def analyze_query_performance(query: str, execution_time: float, row_count: int)
         "rows_per_second": row_count / execution_time if execution_time > 0 else 0,
         "suggestions": []
     }
-
-    # Basic query analysis
-    query_lower = query.lower()
-
-    # Check for SELECT *
-    if "select *" in query_lower:
-        performance_metrics["suggestions"].append({
-            "type": "warning",
-            "message": "Consider specifying required columns instead of SELECT * to improve performance"
-        })
-
-    # Check for missing WHERE clause
-    if "where" not in query_lower:
-        performance_metrics["suggestions"].append({
-            "type": "info",
-            "message": "Query has no WHERE clause - consider adding filters if large data set"
-        })
-
-    # Check for potential cartesian products
-    if query_lower.count("join") > query_lower.count("on"):
-        performance_metrics["suggestions"].append({
-            "type": "error",
-            "message": "Possible cartesian product detected - ensure proper JOIN conditions"
-        })
 
     # Performance classification
     if execution_time < 0.1:

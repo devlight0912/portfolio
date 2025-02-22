@@ -13,5 +13,6 @@ sqlalchemy
 # API and configuration
 python-dotenv
 openai
-# Add statsmodels for statistical models
+jsonschema
+# statistical models
 statsmodels

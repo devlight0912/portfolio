@@ -1,7 +1,11 @@
 import os
 import logging
-from openai import AzureOpenAI
+import re
 from dotenv import load_dotenv
+
+# Import both providers
+from openai import AzureOpenAI
+import google.generativeai as genai
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -10,33 +14,41 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Validate required environment variables
-REQUIRED_ENV_VARS = [
-    "OPENAI_ENDPOINT",
-    "OPENAI_API_VERSION",
-    "OPENAI_API_KEY",
-    "MODEL_NAME"
-]
+# Determine which provider to use
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "AZURE").upper()
+logger.info(f"LLM Provider: {LLM_PROVIDER}")
+
+# Validate required environment variables based on provider
+if LLM_PROVIDER == "AZURE":
+    REQUIRED_ENV_VARS = [
+        "OPENAI_ENDPOINT",
+        "OPENAI_API_VERSION",
+        "OPENAI_API_KEY",
+        "MODEL_NAME"
+    ]
+elif LLM_PROVIDER == "GEMINI":
+    REQUIRED_ENV_VARS = [
+        "GEMINI_API_KEY"
+    ]
+else:
+    raise ValueError("Unsupported LLM_PROVIDER. Please set LLM_PROVIDER to 'AZURE' or 'GEMINI'.")
 
 missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
 if missing_vars:
     logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
     raise EnvironmentError(f"Missing environment variables: {', '.join(missing_vars)}")
 
-# Initialize AzureOpenAI client
-_client = None  # Private client variable
+# Configure Gemini API if using Gemini
+if LLM_PROVIDER == "GEMINI":
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-def get_openai_client():
-    """
-    Get the AzureOpenAI client instance, initializing it if necessary.
-
-    Returns:
-    - AzureOpenAI: The initialized AzureOpenAI client instance.
-    """
-    global _client
-    if _client is None:
+# Initialize Azure client when needed
+_azure_client = None
+def get_azure_client():
+    global _azure_client
+    if _azure_client is None:
         try:
-            _client = AzureOpenAI(
+            _azure_client = AzureOpenAI(
                 azure_endpoint=os.getenv("OPENAI_ENDPOINT"),
                 api_version=os.getenv("OPENAI_API_VERSION"),
                 api_key=os.getenv("OPENAI_API_KEY")
@@ -45,7 +57,7 @@ def get_openai_client():
         except Exception as e:
             logger.exception("Failed to initialize AzureOpenAI client.")
             raise e
-    return _client
+    return _azure_client
 
 def get_completion_from_messages(
     system_message: str,
@@ -59,52 +71,72 @@ def get_completion_from_messages(
     frequency_penalty: float = 0.0
 ) -> str:
     """
-    Generate a completion response from OpenAI's API based on the given system and user messages.
+    Generate a completion response from the selected LLM provider based on the provided system and user messages.
 
-    Parameters:
-    - system_message (str): The system message for setting the assistant's behavior.
-    - user_message (str): The user's message or query.
-    - model (str): The name of the model to use for the completion (default from environment).
-    - temperature (float): Controls randomness. Lower values make the output more deterministic (default: 0.2).
-    - top_p (float): Controls diversity. Considers the most likely tokens with probability up to top_p (default: 0.95).
-    - max_tokens (int): The maximum number of tokens to generate in the response (default: 1000).
-    - n (int): How many chat completion choices to generate for each input message (default: 1).
-    - presence_penalty (float): Positive values penalize new tokens based on whether they have already appeared in the text so far (default: 0.0).
-    - frequency_penalty (float): Positive values penalize new tokens based on their existing frequency in the text so far (default: 0.0).
+    For AzureOpenAI, additional parameters are supported.
+    For Gemini, only the temperature parameter is utilized.
 
     Returns:
-    - str: The content of the generated response.
+        str: The generated response content.
     """
-    # Use environment variable for model if not provided
-    if model is None:
-        model = os.getenv("MODEL_NAME")
-
-    messages = [
-        {'role': 'system', 'content': system_message},
-        {'role': 'user', 'content': user_message}
-    ]
-
-    client = get_openai_client()
-
-    # Log input messages
     logger.info(f"System message: {system_message}")
     logger.info(f"User message: {user_message}")
+    logger.info(f"Selected LLM Provider: {LLM_PROVIDER}")
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            n=n,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty
-        )
-        # For simplicity, return the first completion if n > 1
-        completion = response.choices[0].message.content
-        logger.info("Completion fetched successfully from OpenAI API.")
-        return completion
-    except Exception as e:
-        logger.exception("Error while fetching completion from OpenAI API.")
-        raise e
+    if LLM_PROVIDER == "AZURE":
+        if model is None:
+            model = os.getenv("MODEL_NAME")
+        messages = [
+            {'role': 'system', 'content': system_message},
+            {'role': 'user', 'content': user_message}
+        ]
+        client = get_azure_client()
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                n=n,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty
+            )
+            completion = response.choices[0].message.content
+            logger.info("Completion fetched successfully from Azure OpenAI API.")
+            return completion
+        except Exception as e:
+            logger.exception("Error while fetching completion from Azure OpenAI API.")
+            raise e
+
+    elif LLM_PROVIDER == "GEMINI":
+        try:
+            # Combine system and user messages
+            combined_message = f"{system_message}\n\nUser Query: {user_message}"
+            logger.info("=== INPUT ===")
+            logger.info(f"Combined Message:\n{combined_message}")
+            logger.info(f"Temperature: {temperature}")
+
+            # Generate response using Gemini's model (defaulting to 'gemini-1.5-pro')
+            model_instance = genai.GenerativeModel('gemini-1.5-pro')
+            response = model_instance.generate_content(
+                contents=combined_message,
+                generation_config={"temperature": temperature}
+            )
+
+            logger.info("=== RAW OUTPUT ===")
+            logger.info(f"Response Object: {response}")
+
+            # Ensure text is a string and perform basic cleaning
+            text = response.text if isinstance(response.text, str) else str(response.text)
+            clean_text = re.sub(r'```json\n|\n```', '', text)
+
+            logger.info("=== CLEANED OUTPUT ===")
+            logger.info(f"Cleaned Text:\n{clean_text}")
+
+            return clean_text
+        except Exception as e:
+            logger.exception(f"Error generating response from Gemini: {str(e)}")
+            raise e
+    else:
+        raise ValueError("Unsupported LLM_PROVIDER specified.")
