@@ -13,6 +13,7 @@ sqlalchemy
 # API and configuration
 python-dotenv
 openai
+google-generativeai
 jsonschema
 # statistical models
 statsmodels
