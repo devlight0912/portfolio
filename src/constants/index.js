@@ -1,25 +1,35 @@
 import {
-  c,
-  python,
-  java,
-  cpp,
-  javascript,
   html,
   css,
-  reactjs,
   tailwind,
+  reactjs,
+  nextjs,
+  vuejs,
+  typescript,
+  javascript,
+  php,
+  laravel,
   nodejs,
+  expressjs,
+  python,
+  mysql,
+  postgresql,
+  mongodb,
+  docker,
+  aws,
+  firebase,
   git,
+  nginx,
+  mathwork,
   edunet,
+  eduskill,
   weatherpedia,
   termpw,
   payloadmaster,
-  threejs,
   mhft,
   sketcher,
-  mathwork,
   CompileVortex,
-  eduskill,
+  threejs
 } from "../assets";
 
 export const navLinks = [
@@ -38,17 +48,18 @@ export const navLinks = [
 ];
 
 export const services = [
-  { title: "C", icon: c },
-  { title: "C++", icon: cpp },
-  { title: "Python", icon: python },
-  { title: "Java", icon: java },
+  { title: "React.js", icon: reactjs },
+  { title: "Next.js", icon: nextjs },
+  { title: "Node.js", icon: nodejs },
+  { title: "PHP", icon: php },
 ];
 
 export const technologies = [
   { name: "HTML 5", icon: html },
   { name: "CSS 3", icon: css },
   { name: "JavaScript", icon: javascript },
-  { name: "Rect JS", icon: reactjs },
+  { name: "React JS", icon: reactjs },
+  { name: "Next JS", icon: nextjs },
   { name: "Tailwind CSS", icon: tailwind },
   { name: "Node JS", icon: nodejs },
   { name: "Three JS", icon: threejs },
